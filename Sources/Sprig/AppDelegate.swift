@@ -95,6 +95,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if arguments.contains("--settings") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                // 同时带 --show 时先弹面板，用来对照「设置是否压在面板上面」
+                if arguments.contains("--show") {
+                    PanelController.shared.show()
+                }
                 SettingsWindowController.shared.present()
                 if arguments.contains("--dump") {
                     SettingsWindowController.shared.debugDump()

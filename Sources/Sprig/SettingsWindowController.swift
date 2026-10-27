@@ -3,8 +3,12 @@ import SprigCore
 import KeyboardShortcuts
 
 @MainActor
-final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
+final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, NSWindowDelegate {
     static let shared = SettingsWindowController()
+
+    /// 面板是 .floating，设置窗口必须再高一层，否则从面板里点「管理模型接入…」会被面板压住，
+    /// 看起来像是点不开、或者像开了两个窗口。
+    private static let windowLevel = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + 1)
 
     private let providerPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private let nameField = NSTextField(string: "")
@@ -28,8 +32,12 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
                               defer: false)
         window.title = "\(AppInfo.name)设置"
         window.isReleasedWhenClosed = false
+        window.level = Self.windowLevel
+        // 跟面板一样只待在自己的 Space；全屏应用上也能浮出来
+        window.collectionBehavior = [.managed, .fullScreenAuxiliary]
         window.center()
         self.init(window: window)
+        window.delegate = self
         buildContent()
     }
 
@@ -461,7 +469,19 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
         reloadProviderPopUp(selecting: Settings.activeProviderID)
         refreshPath()
         statusLabel.stringValue = ""
-        window?.makeKeyAndOrderFront(nil)
+        guard let window else { return }
+        window.makeKeyAndOrderFront(nil)
+        // 面板长期处于 .floating，这里再抬一次，确保任何情况下设置都压在它上面
+        window.orderFrontRegardless()
+        window.makeKey()
+    }
+
+    /// 设置关掉后把焦点还给面板，免得面板看着还在、却接不到键盘输入
+    func windowWillClose(_ notification: Notification) {
+        let panel = PanelController.shared.panel
+        if panel.isVisible {
+            panel.makeKey()
+        }
     }
 
     /// 无界面校验：`Sprig --settings --dump` 打印表单状态后退出
@@ -479,5 +499,8 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
         print("remove.enabled     =", removeButton.isEnabled)
         print("status             =", statusLabel.stringValue)
         print("configs.isConfigured =", Settings.providerConfigs.map { "\($0.displayName):\($0.isConfigured)" })
+        print("settings.level     =", window?.level.rawValue ?? -1)
+        print("panel.level        =", PanelController.shared.panel.level.rawValue)
+        print("settings.abovePanel=", (window?.level.rawValue ?? -1) > PanelController.shared.panel.level.rawValue)
     }
 }
