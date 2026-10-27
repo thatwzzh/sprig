@@ -82,7 +82,111 @@ public struct OpenAICompatibleProvider: LLMProvider {
         }
     }
 
-    private func makeRequest(messages: [ChatMessage]) throws -> URLRequest {
+    /// 带工具的一轮请求。
+    /// 流式下 `tool_calls` 是分片到达的（id/name 通常只在第一片，arguments 逐段追加），
+    /// 所以按 `index` 累积，流结束后一次性吐出完整的调用。
+    public func streamEvents(messages: [ChatMessage],
+                             tools: [ToolDefinition]) -> AsyncThrowingStream<ChatEvent, Error> {
+        guard !tools.isEmpty else {
+            // 没工具就是普通对话，别多走一遍解析
+            return AsyncThrowingStream { continuation in
+                let task = Task {
+                    do {
+                        for try await chunk in stream(messages: messages) {
+                            continuation.yield(.text(chunk))
+                        }
+                        continuation.finish()
+                    } catch {
+                        continuation.finish(throwing: error)
+                    }
+                }
+                continuation.onTermination = { _ in task.cancel() }
+            }
+        }
+
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let request = try makeRequest(messages: messages, tools: tools)
+                    let (bytes, response) = try await session.bytes(for: request)
+
+                    guard let http = response as? HTTPURLResponse else {
+                        throw LLMError.server("没有收到 HTTP 响应")
+                    }
+                    guard http.statusCode == 200 else {
+                        var body = ""
+                        for try await line in bytes.lines.prefix(8) { body += line }
+                        throw LLMError.http(status: http.statusCode, body: body)
+                    }
+
+                    var partials: [Int: PartialToolCall] = [:]
+
+                    for try await line in bytes.lines {
+                        guard line.hasPrefix("data:") else { continue }
+                        let payload = line.dropFirst("data:".count)
+                            .trimmingCharacters(in: .whitespaces)
+                        if payload.isEmpty { continue }
+                        if payload == "[DONE]" { break }
+
+                        guard let data = payload.data(using: .utf8),
+                              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                            continue
+                        }
+                        if let error = object["error"] as? [String: Any],
+                           let message = error["message"] as? String {
+                            throw LLMError.server(message)
+                        }
+                        guard let choices = object["choices"] as? [[String: Any]],
+                              let delta = choices.first?["delta"] as? [String: Any] else {
+                            continue
+                        }
+
+                        if let content = delta["content"] as? String, !content.isEmpty {
+                            continuation.yield(.text(content))
+                        }
+
+                        if let rawCalls = delta["tool_calls"] as? [[String: Any]] {
+                            for raw in rawCalls {
+                                let index = raw["index"] as? Int ?? 0
+                                var partial = partials[index] ?? PartialToolCall()
+                                if let id = raw["id"] as? String, !id.isEmpty { partial.id = id }
+                                if let fn = raw["function"] as? [String: Any] {
+                                    if let name = fn["name"] as? String, !name.isEmpty {
+                                        partial.name = name
+                                    }
+                                    if let args = fn["arguments"] as? String {
+                                        partial.arguments += args
+                                    }
+                                }
+                                partials[index] = partial
+                            }
+                        }
+                    }
+
+                    if !partials.isEmpty {
+                        let calls = partials
+                            .sorted { $0.key < $1.key }
+                            .compactMap { _, partial -> ToolCall? in
+                                guard !partial.name.isEmpty else { return nil }
+                                return ToolCall(id: partial.id.isEmpty ? UUID().uuidString : partial.id,
+                                                name: partial.name,
+                                                arguments: partial.arguments)
+                            }
+                        if !calls.isEmpty {
+                            continuation.yield(.toolCalls(calls))
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    private func makeRequest(messages: [ChatMessage],
+                             tools: [ToolDefinition] = []) throws -> URLRequest {
         var request = URLRequest(url: chatEndpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -93,14 +197,62 @@ public struct OpenAICompatibleProvider: LLMProvider {
             request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         }
 
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "model": model,
-            "messages": messages.map { ["role": $0.role.rawValue, "content": $0.content] },
+            "messages": messages.map(encodeMessage),
             "stream": true,
             "temperature": temperature,
         ]
+
+        if !tools.isEmpty {
+            body["tools"] = tools.map { tool -> [String: Any] in
+                let parameters = (try? JSONSerialization.jsonObject(
+                    with: Data(tool.parametersJSON.utf8))) as? [String: Any]
+                    ?? ["type": "object", "properties": [String: Any]()]
+                return [
+                    "type": "function",
+                    "function": [
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": parameters,
+                    ],
+                ]
+            }
+            body["tool_choice"] = "auto"
+        }
+
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         return request
+    }
+
+    /// role 是 tool 的消息要带 `tool_call_id`，assistant 的调用请求要带 `tool_calls`
+    private func encodeMessage(_ message: ChatMessage) -> [String: Any] {
+        var dict: [String: Any] = [
+            "role": message.role.rawValue,
+            "content": message.content,
+        ]
+        if let calls = message.toolCalls, !calls.isEmpty {
+            dict["tool_calls"] = calls.map { call -> [String: Any] in
+                [
+                    "id": call.id,
+                    "type": "function",
+                    "function": [
+                        "name": call.name,
+                        "arguments": call.arguments,
+                    ],
+                ]
+            }
+        }
+        if let callID = message.toolCallID {
+            dict["tool_call_id"] = callID
+        }
+        return dict
+    }
+
+    private struct PartialToolCall: Sendable {
+        var id: String = ""
+        var name: String = ""
+        var arguments: String = ""
     }
 
     /// 用户可能填 `https://api.deepseek.com`、`https://x/v1`，甚至完整 endpoint。

@@ -73,6 +73,7 @@ UI 层不直接读文件，Core 层不 import AppKit——这条边界让「解�
 | `OpenAICompatibleProvider` | 模型 | SSE；`/v1/chat/completions`，Base URL 自动归一化 |
 | `GeminiProvider` | 模型 | 原生 SSE；`systemInstruction` + `x-goog-api-key` |
 | `FreeModelCatalog` | 免费模型目录 | OpenRouter `/api/v1/models`，按 `pricing` 为 0 筛免费；无需 Key。挑模型用「排除表 + 偏好权重」，权重看中文与指令遵循，不按上下文长度 |
+| `WebSearchTool` | 联网搜索 | Tavily `/search`；摘要截 600 字/条，避免吃掉上下文预算 |
 
 ## 4. 数据流
 

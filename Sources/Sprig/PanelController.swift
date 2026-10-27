@@ -674,12 +674,62 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         seenTerms.removeAll()
 
         let provider = Settings.provider
+        // 没配搜索就传空数组，provider 走纯文本快路径，行为跟之前一致
+        let tools: [ToolDefinition] = Settings.webSearchReady ? [WebSearchTool.definition] : []
+        let searchKey = Settings.webSearchAPIKey
+        let maxRounds = 3
+
         streamTask = Task { @MainActor [weak self] in
             guard let self else { return }
+            var conversation = messages
+
             do {
-                for try await chunk in provider.stream(messages: messages) {
+                // 一轮 = 一次请求 +（可能的）工具执行。模型不需要工具就提前收尾。
+                for round in 0...maxRounds {
+                    var requested: [ToolCall] = []
+
+                    for try await event in provider.streamEvents(messages: conversation, tools: tools) {
+                        if Task.isCancelled { return }
+                        switch event {
+                        case .text(let chunk):
+                            self.consume(chunk)
+                        case .toolCalls(let calls):
+                            requested = calls
+                        }
+                    }
                     if Task.isCancelled { return }
-                    self.consume(chunk)
+
+                    guard !requested.isEmpty else {
+                        self.finishStreaming()
+                        return
+                    }
+                    guard round < maxRounds else {
+                        self.consume("\n\n（已连续搜索 \(maxRounds) 轮，先按现有资料回答）")
+                        self.finishStreaming()
+                        return
+                    }
+
+                    conversation.append(.assistantToolCalls(requested))
+
+                    for call in requested {
+                        let query: String
+                        if let parsed = try? WebSearchTool.parseQuery(call.arguments) {
+                            query = parsed
+                        } else {
+                            query = String(call.arguments.prefix(40))
+                        }
+                        // 把搜索动作写进答案，用户才知道这些内容是哪来的
+                        self.consume("\n\n🔍 搜索「\(query)」\n\n")
+
+                        do {
+                            let result = try await WebSearchTool.execute(argumentsJSON: call.arguments,
+                                                                        apiKey: searchKey)
+                            conversation.append(.toolResult(result, for: call.id))
+                        } catch {
+                            conversation.append(.toolResult("搜索失败：\(error.localizedDescription)",
+                                                            for: call.id))
+                        }
+                    }
                 }
                 self.finishStreaming()
             } catch {

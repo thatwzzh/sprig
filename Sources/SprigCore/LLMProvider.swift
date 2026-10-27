@@ -7,10 +7,31 @@ public protocol LLMProvider: Sendable {
     /// 本机推理的模型：上下文窗口小、对长输入更敏感，装上下文时用紧一点的预算
     var isLocal: Bool { get }
     func stream(messages: [ChatMessage]) -> AsyncThrowingStream<String, Error>
+    /// 带工具的流式。不支持的 provider 走默认实现，退化成纯文本。
+    func streamEvents(messages: [ChatMessage], tools: [ToolDefinition]) -> AsyncThrowingStream<ChatEvent, Error>
 }
 
 public extension LLMProvider {
     var isLocal: Bool { false }
+
+    /// 默认实现：忽略 tools，把文本流包成事件流。
+    /// 这样 Ollama / Gemini 不用改，未接工具时行为与之前完全一致。
+    func streamEvents(messages: [ChatMessage],
+                      tools: [ToolDefinition]) -> AsyncThrowingStream<ChatEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    for try await chunk in stream(messages: messages) {
+                        continuation.yield(.text(chunk))
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
 }
 
 public enum LLMError: LocalizedError, Sendable {

@@ -95,6 +95,31 @@ enum Settings {
         providerConfigs = configs
     }
 
+    // MARK: - 联网搜索
+
+    private static let webSearchEnabledKey = "webSearchEnabled"
+    private static let webSearchAPIKeyKey = "webSearchAPIKey"
+
+    /// 是否让模型自己决定要不要联网搜。默认关——开着会花搜索额度。
+    static var webSearchEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: webSearchEnabledKey) }
+        set {
+            UserDefaults.standard.set(newValue, forKey: webSearchEnabledKey)
+            NotificationCenter.default.post(name: .sprigProvidersDidChange, object: nil)
+        }
+    }
+
+    /// Tavily 的 API Key（1000 次/月免费）
+    static var webSearchAPIKey: String {
+        get { UserDefaults.standard.string(forKey: webSearchAPIKeyKey) ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: webSearchAPIKeyKey) }
+    }
+
+    /// 真正可用的条件：开关打开 + 有 Key
+    static var webSearchReady: Bool {
+        webSearchEnabled && !webSearchAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     // MARK: - 免费模型（OpenRouter）
 
     private static let freeModelsLastSyncKey = "freeModelsLastSync"

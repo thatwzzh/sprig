@@ -23,6 +23,11 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
     private let syncFreeButton = PointerButton(title: "同步免费", target: nil, action: nil)
     private let keyHelpButton = PointerButton(title: "去获取", target: nil, action: nil)
     private let removeButton = PointerButton(title: "－", target: nil, action: nil)
+    private let webSearchToggle = NSButton(checkboxWithTitle: "让模型自己联网搜索（Tavily）",
+                                           target: nil,
+                                           action: nil)
+    private let webSearchKeyField = NSSecureTextField(string: "")
+    private let webSearchHelpButton = PointerButton(title: "去获取", target: nil, action: nil)
 
     /// providerPopUp 里每一项对应的配置 id，顺序与 Settings.providerConfigs 一致
     private var popupIDs: [UUID] = []
@@ -173,33 +178,59 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         addSeparator(y: 264, to: contentView)
 
         // 知识库
-        addSectionTitle("知识库", y: 238, to: contentView)
+        addSectionTitle("知识库", y: 240, to: contentView)
         pathLabel.font = .systemFont(ofSize: 12)
         pathLabel.textColor = .secondaryLabelColor
         pathLabel.lineBreakMode = .byTruncatingMiddle
-        pathLabel.frame = NSRect(x: 24, y: 210, width: 330, height: 18)
+        pathLabel.frame = NSRect(x: 24, y: 214, width: 330, height: 18)
+        pathLabel.toolTip = "卡片存放在这个目录的 \(CardStore.fileName) 里，换目录时会把现有卡片复制过去"
         contentView.addSubview(pathLabel)
 
         let chooseButton = PointerButton(title: "选择…", target: self, action: #selector(chooseFolder))
         chooseButton.bezelStyle = .rounded
         chooseButton.controlSize = .small
         chooseButton.font = .systemFont(ofSize: 12)
-        chooseButton.frame = NSRect(x: 396, y: 205, width: 80, height: 26)
+        chooseButton.frame = NSRect(x: 396, y: 209, width: 80, height: 26)
         chooseButton.toolTip = "选择知识库文件夹"
         contentView.addSubview(chooseButton)
 
+        addSeparator(y: 190, to: contentView)
+
+        // 联网搜索
+        addSectionTitle("联网搜索", y: 168, to: contentView)
+
+        webSearchToggle.target = self
+        webSearchToggle.action = #selector(webSearchToggled)
+        webSearchToggle.font = .systemFont(ofSize: 12)
+        webSearchToggle.frame = NSRect(x: 22, y: 140, width: 320, height: 20)
+        webSearchToggle.state = Settings.webSearchEnabled ? .on : .off
+        contentView.addSubview(webSearchToggle)
+
+        webSearchKeyField.placeholderString = "Tavily API Key（tvly-…）"
+        webSearchKeyField.font = .systemFont(ofSize: 12)
+        webSearchKeyField.delegate = self
+        webSearchKeyField.stringValue = Settings.webSearchAPIKey
+        webSearchKeyField.frame = NSRect(x: 24, y: 110, width: 376, height: 24)
+        contentView.addSubview(webSearchKeyField)
+
+        webSearchHelpButton.target = self
+        webSearchHelpButton.action = #selector(openTavily)
+        webSearchHelpButton.bezelStyle = .rounded
+        webSearchHelpButton.controlSize = .small
+        webSearchHelpButton.font = .systemFont(ofSize: 12)
+        webSearchHelpButton.frame = NSRect(x: 406, y: 109, width: 70, height: 26)
+        webSearchHelpButton.toolTip = "在 tavily.com 注册后免费领一个 Key（1000 次/月）"
+        contentView.addSubview(webSearchHelpButton)
+
         let hint = NSTextField(wrappingLabelWithString:
-            "API Key 只写入本机偏好设置，不会上传到任何第三方。\n\n"
-            + "两条免费接入的 Key 都能白拿，API Key 右侧有「去获取」，点了直接打开：\n"
-            + "· OpenRouter —— openrouter.ai/keys，约 20 次/分钟、50 次/天（充值满 $10 后 1,000 次/天）；"
-            + "免费模型由 app 自动导入并每天更新。\n"
-            + "· Gemini —— aistudio.google.com/apikey，约 10–15 次/分钟；默认 gemini-2.5-flash。\n\n"
-            + "「OpenAI 兼容」适用于 OpenAI / DeepSeek / Groq / 智谱 / 火山 / 百炼 / LM Studio 等，"
-            + "Base URL 填到 /v1 或只填域名都行。\n\n"
-            + "知识库是一个 JSON 文件（\(CardStore.fileName)），换目录时会把现有卡片复制过去，原目录不删。")
+            "API Key 只写入本机偏好设置，不会上传；需要 Key 的接入右侧都有「去获取」。\n"
+            + "「OpenAI 兼容」适用于 OpenAI / DeepSeek / Groq / 智谱 / 火山 / 百炼 等，"
+            + "Base URL 填到 /v1 或只填域名都行。\n"
+            + "免费模型（OpenRouter 19 个）由 app 自动导入并每天更新。\n"
+            + "联网搜索用 Tavily，免费 1000 次/月；开着时模型可能为一次提问连搜多轮。")
         hint.font = .systemFont(ofSize: 11)
         hint.textColor = .secondaryLabelColor
-        hint.frame = NSRect(x: 24, y: 12, width: 452, height: 182)
+        hint.frame = NSRect(x: 24, y: 12, width: 452, height: 88)
         contentView.addSubview(hint)
 
         reloadProviderPopUp(selecting: Settings.activeProviderID)
@@ -518,9 +549,27 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
 
     func controlTextDidEndEditing(_ obj: Notification) {
         guard let field = obj.object as? NSTextField else { return }
+        if field === webSearchKeyField {
+            Settings.webSearchAPIKey = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            return
+        }
         if field === nameField || field === baseURLField || field === modelField || field === apiKeyField {
             persistCurrentEdits()
         }
+    }
+
+    @objc private func webSearchToggled() {
+        Settings.webSearchEnabled = webSearchToggle.state == .on
+        if Settings.webSearchEnabled && Settings.webSearchAPIKey.isEmpty {
+            statusLabel.stringValue = "还需填 Tavily Key"
+        } else {
+            statusLabel.stringValue = ""
+        }
+    }
+
+    @objc private func openTavily() {
+        guard let url = URL(string: "https://tavily.com/") else { return }
+        NSWorkspace.shared.open(url)
     }
 
     func present() {
@@ -562,6 +611,9 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         print("remove.enabled     =", removeButton.isEnabled)
         print("keyHelp.button     =", keyHelpButton.isHidden ? "隐藏" : "显示")
         print("keyHelp.tooltip    =", keyHelpButton.toolTip ?? "")
+        print("webSearch.enabled  =", Settings.webSearchEnabled)
+        print("webSearch.hasKey   =", Settings.webSearchAPIKey.isEmpty ? "否" : "是")
+        print("webSearch.ready    =", Settings.webSearchReady)
         print("status             =", statusLabel.stringValue)
         print("configs.isConfigured =", Settings.providerConfigs.map { "\($0.displayName):\($0.isConfigured)" })
         print("settings.level     =", window?.level.rawValue ?? -1)

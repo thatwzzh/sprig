@@ -137,6 +137,30 @@ qwen3 > gemma-4-31b > nemotron-3-super > 星辰 > minimax > inkling-small > ligh
 
 设置页「同步免费」按钮可以随时手动刷新，右侧会显示当前可用数量。
 
+### 联网搜索
+
+知识问答常需要最新信息，所以接了工具调用（tool use）——**模型自己决定要不要搜、搜什么**，
+不是每次提问都塞一堆搜索结果进去。
+
+配置：设置页 →「联网搜索」→ 打开开关 → 填 Tavily 的 Key（[tavily.com](https://tavily.com/)，免费 1000 次/月）。
+
+实现方式是自己走 tool use，不是 OpenRouter 的 `:online` 插件（那个每次 $0.007）：
+
+```
+提问 → 模型返回 tool_calls(web_search, {query})
+     → app 调 Tavily 拿结果
+     → 作为 role:tool 消息回填
+     → 模型整合成答案
+```
+
+最多 3 轮，防止模型反复搜同一个词。搜索动作会写进答案（`🔍 搜索「…」`），你能看到答案基于什么。
+
+**只对「OpenAI 兼容」接入生效**。Ollama 和 Gemini 走的是协议里的默认实现，传了 tools 也只会当普通对话处理。
+切换接入时会自动降级，不会报错。
+
+**成本**：搜索走 Tavily 的免费额度（1000 次/月），模型 token 走你选的那条接入。
+一次提问最多 4 次模型调用（初始 + 3 轮搜索），注意免费层的每分钟限额。
+
 ## 配置
 
 | 项 | 位置 | 默认值 |
@@ -181,6 +205,8 @@ Sprig/
 │   │   ├── LLMProvider.swift      # provider 协议（id / displayName / isLocal / stream）
 │   │   ├── ProviderConfig.swift   # 一条接入的配置模型 + 内置预设
 │   │   ├── FreeModelCatalog.swift # 拉 OpenRouter 免费模型清单（公开接口，无需 Key）
+│   │   ├── Tool.swift             # ToolCall / ToolDefinition / ChatEvent
+│   │   ├── WebSearchTool.swift    # web_search 工具（Tavily）
 │   │   ├── OllamaProvider.swift   # NDJSON 流式
 │   │   ├── OpenAICompatibleProvider.swift  # SSE 流式，覆盖所有 /v1/chat/completions
 │   │   └── GeminiProvider.swift   # Gemini 原生 SSE（systemInstruction / x-goog-api-key）
@@ -231,6 +257,7 @@ macOS 26 (Tahoe) 把第三方菜单栏项收归 ControlCenter 管理，并加了
 - **免费额度随时会变**：Gemini 免费层的模型清单和速率限制在 2026 年调整过多次，429 时先降低频率；Gemini 3.x 系列目前不在免费名单里，默认值锁在 `gemini-2.5-flash`。
 - **跨桌面语义**：面板绑定在唤出它的桌面，切桌面不跟随；在别的桌面按热键会把面板迁过来（轮询 `isOnActiveSpace` 确认迁移完成后再锁定）。
 - **不做全局划词**：选词只发生在面板自己的答案区。这是有意为之——省掉辅助功能权限、AX 取词、OCR 三件套。
+- **联网搜索只支持「OpenAI 兼容」接入**：tool use 实现在 `OpenAICompatibleProvider` 里；Ollama 和 Gemini 走协议默认实现，会静默降级为普通对话。
 - **菜单栏图标受 macOS 26 授权控制**：详见上面「菜单栏图标不见了」，这不是 app 能自己修的。
 
 ## 后续计划

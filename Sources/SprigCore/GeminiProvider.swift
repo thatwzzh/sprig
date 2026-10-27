@@ -112,6 +112,9 @@ public struct GeminiProvider: LLMProvider {
                 contents.append(["role": "user", "parts": [["text": message.content]]])
             case .assistant:
                 contents.append(["role": "model", "parts": [["text": message.content]]])
+            case .tool:
+                // Gemini 这一版没接工具调用；真收到工具结果就当用户补充的参考资料
+                contents.append(["role": "user", "parts": [["text": message.content]]])
             }
         }
 
