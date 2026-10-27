@@ -20,6 +20,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
     private let statusLabel = NSTextField(labelWithString: "")
     private let fetchButton = PointerButton(title: "拉取", target: nil, action: nil)
     private let testButton = PointerButton(title: "测试连接", target: nil, action: nil)
+    private let syncFreeButton = PointerButton(title: "同步免费", target: nil, action: nil)
     private let removeButton = PointerButton(title: "－", target: nil, action: nil)
 
     /// providerPopUp 里每一项对应的配置 id，顺序与 Settings.providerConfigs 一致
@@ -144,10 +145,19 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         testButton.frame = NSRect(x: 120, y: 282, width: 88, height: 26)
         contentView.addSubview(testButton)
 
+        syncFreeButton.target = self
+        syncFreeButton.action = #selector(syncFreeModelsTapped)
+        syncFreeButton.bezelStyle = .rounded
+        syncFreeButton.controlSize = .small
+        syncFreeButton.font = .systemFont(ofSize: 12)
+        syncFreeButton.frame = NSRect(x: 214, y: 282, width: 104, height: 26)
+        syncFreeButton.toolTip = "从 OpenRouter 拉取当前免费模型（每天自动刷新）"
+        contentView.addSubview(syncFreeButton)
+
         statusLabel.font = .systemFont(ofSize: 11)
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.lineBreakMode = .byTruncatingTail
-        statusLabel.frame = NSRect(x: 216, y: 287, width: 260, height: 16)
+        statusLabel.frame = NSRect(x: 326, y: 287, width: 150, height: 16)
         contentView.addSubview(statusLabel)
 
         addSeparator(y: 264, to: contentView)
@@ -397,6 +407,25 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         statusLabel.stringValue = "已选 \(name)"
     }
 
+    @objc private func syncFreeModelsTapped() {
+        syncFreeButton.isEnabled = false
+        statusLabel.stringValue = "同步中…"
+
+        Task { @MainActor in
+            let previous = Settings.activeProviderID
+            let ok = await Settings.syncFreeModels()
+            syncFreeButton.isEnabled = true
+
+            guard ok else {
+                statusLabel.stringValue = "拉取失败，检查网络"
+                return
+            }
+            statusLabel.stringValue = "\(Settings.freeModelsCount) 个免费模型"
+            // 当前表单可能就是这条接入，同步时模型名可能被维护过，重新载入
+            reloadProviderPopUp(selecting: previous)
+        }
+    }
+
     @objc private func testConnection() {
         persistCurrentEdits()
         guard let index = currentIndex else { return }
@@ -468,7 +497,10 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         // 每次打开都从最新状态重建，避免面板里切过模型后这里还显示旧的
         reloadProviderPopUp(selecting: Settings.activeProviderID)
         refreshPath()
-        statusLabel.stringValue = ""
+        // 没做过别的操作时，这里显示免费模型的同步情况
+        statusLabel.stringValue = Settings.freeModelsLastSync == nil
+            ? ""
+            : "免费模型 \(Settings.freeModelsCount) 个"
         guard let window else { return }
         window.makeKeyAndOrderFront(nil)
         // 面板长期处于 .floating，这里再抬一次，确保任何情况下设置都压在它上面

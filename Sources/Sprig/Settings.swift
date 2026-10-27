@@ -95,6 +95,62 @@ enum Settings {
         providerConfigs = configs
     }
 
+    // MARK: - 免费模型（OpenRouter）
+
+    private static let freeModelsLastSyncKey = "freeModelsLastSync"
+    private static let freeModelsCountKey = "freeModelsCount"
+
+    /// 上次同步免费模型的时间
+    static var freeModelsLastSync: Date? {
+        UserDefaults.standard.object(forKey: freeModelsLastSyncKey) as? Date
+    }
+
+    /// 上次同步时拿到的免费模型数量
+    static var freeModelsCount: Int {
+        UserDefaults.standard.integer(forKey: freeModelsCountKey)
+    }
+
+    /// 是否已经有一条 OpenRouter 免费接入
+    static var hasFreeModelConfig: Bool {
+        providerConfigs.contains { $0.id == ProviderConfig.builtinOpenRouterFreeID }
+    }
+
+    /// 超过一天就该重新拉一次
+    static var needsFreeModelSync: Bool {
+        guard let last = freeModelsLastSync else { return true }
+        return Date().timeIntervalSince(last) >= 24 * 60 * 60
+    }
+
+    /// 拉取并维护 OpenRouter 免费接入。
+    /// 已存在这条接入时只做维护：当前选的模型如果下架了就换成清单里的第一个，否则不动用户的选择。
+    /// 返回是否成功拿到清单（网络失败不算异常，静默返回 false）。
+    @discardableResult
+    @MainActor
+    static func syncFreeModels() async -> Bool {
+        guard let models = try? await FreeModelCatalog.openRouterFreeModels(), !models.isEmpty else {
+            return false
+        }
+
+        var configs = providerConfigs
+        if let index = configs.firstIndex(where: { $0.id == ProviderConfig.builtinOpenRouterFreeID }) {
+            let inList = models.contains { $0.id == configs[index].model }
+            if !inList {
+                configs[index].model = FreeModelCatalog.preferred(from: models)?.id ?? models[0].id
+            }
+            // 名字被用户改过就不覆盖
+            if configs[index].name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                configs[index].name = "OpenRouter 免费"
+            }
+        } else {
+            configs.append(ProviderConfig.openRouterFree(model: FreeModelCatalog.preferred(from: models)?.id ?? models[0].id))
+        }
+
+        providerConfigs = configs
+        UserDefaults.standard.set(Date(), forKey: freeModelsLastSyncKey)
+        UserDefaults.standard.set(models.count, forKey: freeModelsCountKey)
+        return true
+    }
+
     // MARK: - 知识库目录
 
     /// 知识库（卡片 JSON）所在目录，默认 ~/Documents/Sprig

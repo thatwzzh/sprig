@@ -101,6 +101,24 @@ Base URL 填到 `/v1` 或只填域名都能识别，`https://x/v1` 不会被拼�
 
 > 免费额度变动频繁，具体以各家控制台为准；上面这几个只在写这份文档时核对过。
 
+### 免费模型自动导入
+
+首次启动会自动从 OpenRouter 拉一次当前免费模型清单（`/api/v1/models` 是公开接口，**不需要 API Key**），
+生成一条「OpenRouter 免费」接入，默认挑清单里中文表现较稳的那个（不取上下文最大的——免费层里 1M 窗口的
+往往是大参数模型，慢且容易撞限额）。
+
+之后 app 每小时检查一次，距上次同步超过 24 小时就重新拉：
+
+- 当前选的模型还在免费清单里 → **不动你的选择**
+- 已经下架 → 自动切到清单里的下一个可用模型
+- 接入已经被删掉 → 不会重新加回来（标了 `isBuiltin`，正常路径删不掉）
+
+设置页「同步免费」按钮可以随时手动刷新，右侧会显示当前可用数量。
+
+**调用仍然需要 OpenRouter 的 Key**（清单不需要，但推理需要）：去
+[openrouter.ai/keys](https://openrouter.ai/keys) 领一个填进这条接入即可。免费层限制约
+20 次/分钟、50 次/天，账号历史上充值满 $10 后提到 1,000 次/天。
+
 ## 配置
 
 | 项 | 位置 | 默认值 |
@@ -144,6 +162,7 @@ Sprig/
 │   │   ├── Prompt.swift           # 系统提示词与子卡消息模板
 │   │   ├── LLMProvider.swift      # provider 协议（id / displayName / isLocal / stream）
 │   │   ├── ProviderConfig.swift   # 一条接入的配置模型 + 内置预设
+│   │   ├── FreeModelCatalog.swift # 拉 OpenRouter 免费模型清单（公开接口，无需 Key）
 │   │   ├── OllamaProvider.swift   # NDJSON 流式
 │   │   ├── OpenAICompatibleProvider.swift  # SSE 流式，覆盖所有 /v1/chat/completions
 │   │   └── GeminiProvider.swift   # Gemini 原生 SSE（systemInstruction / x-goog-api-key）

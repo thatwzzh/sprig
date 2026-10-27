@@ -72,6 +72,7 @@ UI 层不直接读文件，Core 层不 import AppKit——这条边界让「解�
 | `OllamaProvider` | 模型 | NDJSON；`think:false`、`num_ctx:8192`、`keep_alive:30m` |
 | `OpenAICompatibleProvider` | 模型 | SSE；`/v1/chat/completions`，Base URL 自动归一化 |
 | `GeminiProvider` | 模型 | 原生 SSE；`systemInstruction` + `x-goog-api-key` |
+| `FreeModelCatalog` | 免费模型目录 | OpenRouter `/api/v1/models`，按 `pricing` 为 0 筛免费；无需 Key |
 
 ## 4. 数据流
 

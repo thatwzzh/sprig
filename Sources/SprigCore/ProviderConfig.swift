@@ -54,6 +54,8 @@ public struct ProviderConfig: Codable, Identifiable, Sendable, Equatable {
     /// 内置项用固定 id，跨启动稳定
     public static let builtinGeminiID = UUID(uuidString: "5A1B0C00-0000-4000-8000-00000000A001")!
     public static let builtinOllamaID = UUID(uuidString: "0A11AB00-0000-4000-8000-00000000B002")!
+    /// OpenRouter 免费模型：由 FreeModelCatalog 自动创建并每日维护，id 固定便于幂等更新
+    public static let builtinOpenRouterFreeID = UUID(uuidString: "5A1B0C00-0000-4000-8000-00000000C003")!
 
     public var id: UUID
     /// 用户自己起的名字，例如「我的 Gemini」「公司网关」
@@ -149,5 +151,16 @@ public extension ProviderConfig {
                            model: ollamaModel.isEmpty ? Kind.ollama.defaultModel : ollamaModel,
                            isBuiltin: true),
         ]
+    }
+
+    /// OpenRouter 免费模型接入。由 `Settings.syncFreeModels()` 自动创建并每日维护。
+    /// 标成内置是为了让每日同步幂等：用户不会把它删掉、第二天又冒出来。
+    public static func openRouterFree(model: String) -> ProviderConfig {
+        ProviderConfig(id: builtinOpenRouterFreeID,
+                       name: "OpenRouter 免费",
+                       kind: .openAICompatible,
+                       baseURL: FreeModelCatalog.openRouterBaseURL,
+                       model: model,
+                       isBuiltin: true)
     }
 }

@@ -5,6 +5,7 @@ import KeyboardShortcuts
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
+    private var freeModelTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -66,6 +67,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Settings.adoptDetectedOllamaModels(models)
             }
         }
+
+        setupFreeModelRefresh()
 
         handleDebugArguments()
     }
@@ -157,6 +160,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editItem.submenu = editMenu
 
         NSApp.mainMenu = mainMenu
+    }
+
+    /// 免费模型：首次启动自动导入，之后每小时看一眼，超过一天就重新拉。
+    /// 拉不到就静默跳过——不能因为网络问题影响 app 启动。
+    private func setupFreeModelRefresh() {
+        Task {
+            guard Settings.needsFreeModelSync else { return }
+            let ok = await Settings.syncFreeModels()
+            print("[freeModels] 同步\(ok ? "成功" : "失败")，可用 \(Settings.freeModelsCount) 个")
+        }
+
+        let timer = Timer(timeInterval: 60 * 60, repeats: true) { _ in
+            Task { @MainActor in
+                guard Settings.needsFreeModelSync else { return }
+                await Settings.syncFreeModels()
+            }
+        }
+        // .common 模式：菜单跟踪、窗口拖动期间也能触发
+        RunLoop.main.add(timer, forMode: .common)
+        freeModelTimer = timer
     }
 
     private func setupStatusItem() {
