@@ -190,16 +190,16 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
 
         let hint = NSTextField(wrappingLabelWithString:
             "API Key 只写入本机偏好设置，不会上传到任何第三方。\n\n"
-            + "OpenRouter 免费模型由 app 自动导入、每天更新，但调用需要 Key："
-            + "点上面 API Key 右侧的「去获取」，或访问 openrouter.ai/keys 免费领一个"
-            + "（约 20 次/分钟、50 次/天）。\n\n"
-            + "Gemini 免费层额度约 10–15 次/分钟，被限流就歇一会儿再问。\n\n"
+            + "两条免费接入的 Key 都能白拿，API Key 右侧有「去获取」，点了直接打开：\n"
+            + "· OpenRouter —— openrouter.ai/keys，约 20 次/分钟、50 次/天（充值满 $10 后 1,000 次/天）；"
+            + "免费模型由 app 自动导入并每天更新。\n"
+            + "· Gemini —— aistudio.google.com/apikey，约 10–15 次/分钟；默认 gemini-2.5-flash。\n\n"
             + "「OpenAI 兼容」适用于 OpenAI / DeepSeek / Groq / 智谱 / 火山 / 百炼 / LM Studio 等，"
             + "Base URL 填到 /v1 或只填域名都行。\n\n"
             + "知识库是一个 JSON 文件（\(CardStore.fileName)），换目录时会把现有卡片复制过去，原目录不删。")
         hint.font = .systemFont(ofSize: 11)
         hint.textColor = .secondaryLabelColor
-        hint.frame = NSRect(x: 24, y: 22, width: 452, height: 172)
+        hint.frame = NSRect(x: 24, y: 12, width: 452, height: 182)
         contentView.addSubview(hint)
 
         reloadProviderPopUp(selecting: Settings.activeProviderID)
@@ -277,9 +277,13 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         baseURLField.placeholderString = config.kind.defaultBaseURL
         modelField.placeholderString = config.kind.defaultModel
         apiKeyField.isEnabled = config.kind.needsAPIKey
-        apiKeyField.placeholderString = config.kind.needsAPIKey
-            ? "粘贴 API Key（仅保存在本机偏好设置）"
-            : "本地接入不需要 Key"
+        if !config.kind.needsAPIKey {
+            apiKeyField.placeholderString = "本地接入不需要 Key"
+        } else if config.keyHelp != nil {
+            apiKeyField.placeholderString = "粘贴 API Key，没有就点右边的「去获取」"
+        } else {
+            apiKeyField.placeholderString = "粘贴 API Key（仅保存在本机偏好设置）"
+        }
 
         // 知道去哪儿领 Key 的接入，给一个可点的入口
         if let help = config.keyHelp, config.kind.needsAPIKey {
