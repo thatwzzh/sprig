@@ -254,6 +254,12 @@ total = inputHeight(46…96)
 8. **qwen3 默认开思维链**：`content` 为空、`thinking` 逐字输出。→ `"think": false`。
 9. **Ollama 默认 `num_ctx=262144`**：9B-q8 撑到 20GB、约 30s/token。→ `num_ctx: 8192`。
 10. **SwiftPM 被 `sandbox-exec` 拦截**：本机所有构建命令需 `--disable-sandbox`。
+11. **macOS 26 起菜单栏图标需要系统授权**：系统设置 → 菜单栏 → 「允许在菜单栏中显示」，按 bundle id 记录。
+    关掉后 `NSStatusItem` 直接失效——`isVisible = true` 会被系统立刻重置回 false，或者图标窗口被
+    ControlCenter 摆到屏幕外（y 为负）。**app 端没有任何 API 能自行恢复。**
+    症状极易误判成代码 bug：实测改图标宽度、去掉 `item.menu`、改 bundle id、改 app 名、精简 Info.plist、
+    延迟创建、去 `prewarm`、`killall SystemUIServer` / ControlCenter / Dock 全部无效；
+    同一份代码换个时间点启动有时能显示，是因为当时授权开关还开着。详见 README「菜单栏图标不见了」。
 
 ## 12. 测试与调试
 

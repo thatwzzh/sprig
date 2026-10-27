@@ -160,8 +160,26 @@ Sprig/
 │       └── Theme.swift / Settings.swift / Hotkey.swift / SettingsWindowController.swift
 ├── Tests/SprigCoreTests/          # 17 项单元测试
 ├── scripts/make-app.sh            # 打包成 build/Sprig.app
+├── scripts/restart-app.sh         # 退出旧实例 → 重新打包 → 启动，改完代码跑这个
 └── ARCHITECTURE.md                # 技术架构文档
 ```
+
+## 菜单栏图标不见了
+
+macOS 26 (Tahoe) 把第三方菜单栏项收归 ControlCenter 管理，并加了一道授权。按顺序查：
+
+1. **系统设置 → 菜单栏 → 最下面的「允许在菜单栏中显示」**，确认本 app 的开关是开的。
+   这是 macOS 26 新加的，按 bundle id 记录。一旦关掉（手滑拖出菜单栏、或系统迁移时默认关闭），
+   `NSStatusItem` 就彻底失效——要么 `isVisible = true` 被系统立刻重置回 false，
+   要么图标窗口被 ControlCenter 摆到屏幕外（y 为负）。**app 端没有任何 API 能自行恢复。**
+2. 确认只有一个实例在跑：`pgrep -f "Contents/MacOS/Sprig" | wc -l`。
+   多于 1 就跑 `./scripts/restart-app.sh`，它会把所有实例清干净并校验。
+3. 确认没被刘海挡住：菜单栏太挤时图标会被塞到刘海下面，没有任何提示。
+   收紧间距可以腾出空间（社区方案，本机未验证效果）：
+   `defaults -currentHost write -globalDomain NSStatusItemSpacing -int 6`，然后重新登录。
+
+**`killall SystemUIServer`、`killall ControlCenter`、重启电脑都不会重置这道授权**——授权是持久化的，
+只在系统设置里能改。图标消失先查第 1 条，不要怀疑代码。
 
 ## 已知限制
 
@@ -171,6 +189,7 @@ Sprig/
 - **免费额度随时会变**：Gemini 免费层的模型清单和速率限制在 2026 年调整过多次，429 时先降低频率；Gemini 3.x 系列目前不在免费名单里，默认值锁在 `gemini-2.5-flash`。
 - **跨桌面语义**：面板绑定在唤出它的桌面，切桌面不跟随；在别的桌面按热键会把面板迁过来（轮询 `isOnActiveSpace` 确认迁移完成后再锁定）。
 - **不做全局划词**：选词只发生在面板自己的答案区。这是有意为之——省掉辅助功能权限、AX 取词、OCR 三件套。
+- **菜单栏图标受 macOS 26 授权控制**：详见上面「菜单栏图标不见了」，这不是 app 能自己修的。
 
 ## 后续计划
 
