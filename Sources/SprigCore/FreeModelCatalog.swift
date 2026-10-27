@@ -71,19 +71,69 @@ public enum FreeModelCatalog {
             .sorted { ($0.contextLength, $0.id) > ($1.contextLength, $1.id) }
     }
 
-    /// 从清单里挑一个默认模型。
-    /// 不直接取上下文最大的——免费层里 1M 窗口的往往是大参数模型，慢且容易撞限额。
-    /// 优先中文/通用表现稳的，再退到快的，最后才按上下文长度兜底。
+    /// 从清单里挑默认模型，面向「知识问答 + 基于回答继续追问」这个场景。
+    ///
+    /// 不按上下文长度挑：免费层里窗口最大的往往是大参数模型或专用模型，又慢又容易撞限额。
+    /// 先剔掉根本不能聊天的（音乐生成、内容审核、代码专用、2.6B 以下的），
+    /// 再按偏好权重选——权重看的是中文表达和指令遵循，`Sprig` 的 prompt 要求模型吐 ⟦术语⟧ 标记，
+    /// 太小的模型经常不守格式。
     public static func preferred(from models: [FreeModel]) -> FreeModel? {
         guard !models.isEmpty else { return nil }
-        let preference = ["qwen3", "gemma-4", "nemotron-3-super", "nemotron-3.5-lightning", "inkling-small"]
-        for keyword in preference {
-            if let match = models.first(where: { $0.id.contains(keyword) }) {
-                return match
-            }
+
+        // 这些即便标着免费也不能当对话模型用
+        let excluded = [
+            "lyria",            // 音乐生成
+            "content-safety",   // 内容审核专用
+            "north-mini-code",  // 代码专用
+            "laguna",           // 代码专用
+            "lfm",              // 2.6B，容易不守输出格式
+            "embed",
+            "rerank",
+        ]
+
+        let usable = models.filter { model in
+            guard model.contextLength >= 32_000 else { return false }
+            let id = model.id.lowercased()
+            return !excluded.contains { id.contains($0) }
         }
-        return models[0]
+        guard !usable.isEmpty else { return models.first }
+
+        func weight(_ model: FreeModel) -> Int {
+            let id = model.id.lowercased()
+            for rule in preference where id.contains(rule.token) {
+                return rule.rank
+            }
+            return 100
+        }
+
+        return usable.sorted { lhs, rhs in
+            let lw = weight(lhs), rw = weight(rhs)
+            if lw != rw { return lw < rw }
+            if lhs.contextLength != rhs.contextLength { return lhs.contextLength > rhs.contextLength }
+            return lhs.id < rhs.id
+        }.first
     }
+
+    /// 排名越小越优先。宁可写死一张表，也不按参数量猜——免费清单每周都在变，
+    /// 这张表只在出现新模型时靠 context 兜底，不会因为某个模型下架就选到奇怪的东西。
+    private static let preference: [(token: String, rank: Int)] = [
+        ("qwen3", 10),                  // 中文和指令遵循最稳的一档
+        ("qwen", 12),
+        ("gemma-4-31b", 20),            // dense 31B，输出格式守得住
+        ("gemma-4", 26),
+        ("nemotron-3-super", 30),
+        ("nemotron-3.5-super-vl", 32),
+        ("xing4", 36),                  // 星辰，中文语料多
+        ("minimax", 40),
+        ("inkling-small", 44),          // 1M 上下文，追问链长也不怕
+        ("nemotron-3.5-lightning", 48), // 快，兜底
+        ("inkling", 52),
+        ("nemotron-3-nano", 56),
+        ("dots", 62),
+        ("flint", 66),
+        ("nemotron-3-ultra", 70),       // 550B，慢
+        ("openrouter/free", 90),        // 路由器，选到什么都说不准
+    ]
 
     /// 单价字段是字符串（"0"、"0.000001"），也见过 "0.0"，统一按数值判断
     private static func isFree(_ raw: String?) -> Bool {

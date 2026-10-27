@@ -163,4 +163,21 @@ public extension ProviderConfig {
                        model: model,
                        isBuiltin: true)
     }
+
+    /// 这条接入该去哪里领 API Key。设置页据此显示可点的「去获取」。
+    /// 只给确定能免费拿到的地址；不认识的 OpenAI 兼容网关返回 nil，不瞎猜。
+    public var keyHelp: (text: String, url: URL)? {
+        let base = baseURL.lowercased()
+        if base.contains("openrouter") {
+            return ("在 openrouter.ai/keys 免费领一个 Key（免费层约 20 次/分钟、50 次/天）",
+                    URL(string: "https://openrouter.ai/keys")!)
+        }
+        switch kind {
+        case .gemini:
+            return ("在 Google AI Studio 免费领一个 Key（免费层约 10–15 次/分钟）",
+                    URL(string: "https://aistudio.google.com/apikey")!)
+        case .ollama, .openAICompatible:
+            return nil
+        }
+    }
 }

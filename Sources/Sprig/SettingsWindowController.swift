@@ -21,6 +21,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
     private let fetchButton = PointerButton(title: "拉取", target: nil, action: nil)
     private let testButton = PointerButton(title: "测试连接", target: nil, action: nil)
     private let syncFreeButton = PointerButton(title: "同步免费", target: nil, action: nil)
+    private let keyHelpButton = PointerButton(title: "去获取", target: nil, action: nil)
     private let removeButton = PointerButton(title: "－", target: nil, action: nil)
 
     /// providerPopUp 里每一项对应的配置 id，顺序与 Settings.providerConfigs 一致
@@ -118,8 +119,17 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         apiKeyField.placeholderString = "粘贴 API Key（仅保存在本机偏好设置）"
         apiKeyField.font = .systemFont(ofSize: 12)
         apiKeyField.delegate = self
-        apiKeyField.frame = NSRect(x: 120, y: 352, width: 356, height: 24)
+        apiKeyField.frame = NSRect(x: 120, y: 352, width: 280, height: 24)
         contentView.addSubview(apiKeyField)
+
+        keyHelpButton.target = self
+        keyHelpButton.action = #selector(openKeyHelp)
+        keyHelpButton.bezelStyle = .rounded
+        keyHelpButton.controlSize = .small
+        keyHelpButton.font = .systemFont(ofSize: 12)
+        keyHelpButton.frame = NSRect(x: 406, y: 351, width: 70, height: 26)
+        keyHelpButton.isHidden = true
+        contentView.addSubview(keyHelpButton)
 
         // 模型
         addRowLabel("模型", y: 323, to: contentView)
@@ -179,15 +189,17 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         contentView.addSubview(chooseButton)
 
         let hint = NSTextField(wrappingLabelWithString:
-            "API Key 只写入本机偏好设置，不会上传到任何第三方；面板里点模型按钮可以随时切换接入。\n\n"
-            + "Gemini 免费层默认 gemini-2.5-flash，额度约为 10–15 次/分钟；被限流时歇一会儿再问。\n\n"
-            + "OpenAI 兼容协议适用于 OpenAI、DeepSeek、Moonshot、Groq、OpenRouter、LM Studio 等；"
+            "API Key 只写入本机偏好设置，不会上传到任何第三方。\n\n"
+            + "OpenRouter 免费模型由 app 自动导入、每天更新，但调用需要 Key："
+            + "点上面 API Key 右侧的「去获取」，或访问 openrouter.ai/keys 免费领一个"
+            + "（约 20 次/分钟、50 次/天）。\n\n"
+            + "Gemini 免费层额度约 10–15 次/分钟，被限流就歇一会儿再问。\n\n"
+            + "「OpenAI 兼容」适用于 OpenAI / DeepSeek / Groq / 智谱 / 火山 / 百炼 / LM Studio 等，"
             + "Base URL 填到 /v1 或只填域名都行。\n\n"
-            + "知识库是一个 JSON 文件（\(CardStore.fileName)），保存在上面的目录里；"
-            + "首次切换到新目录时会把现有卡片复制过去，原目录不会被删除。")
+            + "知识库是一个 JSON 文件（\(CardStore.fileName)），换目录时会把现有卡片复制过去，原目录不删。")
         hint.font = .systemFont(ofSize: 11)
         hint.textColor = .secondaryLabelColor
-        hint.frame = NSRect(x: 24, y: 32, width: 452, height: 162)
+        hint.frame = NSRect(x: 24, y: 22, width: 452, height: 172)
         contentView.addSubview(hint)
 
         reloadProviderPopUp(selecting: Settings.activeProviderID)
@@ -268,6 +280,14 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         apiKeyField.placeholderString = config.kind.needsAPIKey
             ? "粘贴 API Key（仅保存在本机偏好设置）"
             : "本地接入不需要 Key"
+
+        // 知道去哪儿领 Key 的接入，给一个可点的入口
+        if let help = config.keyHelp, config.kind.needsAPIKey {
+            keyHelpButton.isHidden = false
+            keyHelpButton.toolTip = help.text
+        } else {
+            keyHelpButton.isHidden = true
+        }
 
         removeButton.isEnabled = !config.isBuiltin
         statusLabel.stringValue = config.isConfigured ? "" : "还没配置完整"
@@ -407,6 +427,13 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         statusLabel.stringValue = "已选 \(name)"
     }
 
+    /// 打开「去哪里领 Key」的页面
+    @objc private func openKeyHelp() {
+        guard let index = currentIndex,
+              let help = Settings.providerConfigs[index].keyHelp else { return }
+        NSWorkspace.shared.open(help.url)
+    }
+
     @objc private func syncFreeModelsTapped() {
         syncFreeButton.isEnabled = false
         statusLabel.stringValue = "同步中…"
@@ -529,6 +556,8 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         print("apiKey.placeholder =", apiKeyField.placeholderString ?? "")
         print("model.field        =", modelField.stringValue)
         print("remove.enabled     =", removeButton.isEnabled)
+        print("keyHelp.button     =", keyHelpButton.isHidden ? "隐藏" : "显示")
+        print("keyHelp.tooltip    =", keyHelpButton.toolTip ?? "")
         print("status             =", statusLabel.stringValue)
         print("configs.isConfigured =", Settings.providerConfigs.map { "\($0.displayName):\($0.isConfigured)" })
         print("settings.level     =", window?.level.rawValue ?? -1)

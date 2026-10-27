@@ -104,8 +104,30 @@ Base URL 填到 `/v1` 或只填域名都能识别，`https://x/v1` 不会被拼�
 ### 免费模型自动导入
 
 首次启动会自动从 OpenRouter 拉一次当前免费模型清单（`/api/v1/models` 是公开接口，**不需要 API Key**），
-生成一条「OpenRouter 免费」接入，默认挑清单里中文表现较稳的那个（不取上下文最大的——免费层里 1M 窗口的
-往往是大参数模型，慢且容易撞限额）。
+生成一条「OpenRouter 免费」接入，之后每天维护。清单里哪些模型真的能聊天、哪些是音乐生成或审核模型，
+只能靠本地规则判断，所以选择策略写死了一张偏好表。
+
+**怎么选模型**：先剔掉不能当对话模型用的——音乐生成（`lyria`）、内容审核（`content-safety`）、
+代码专用（`north-mini-code` / `laguna`）、2.6B 以下的（`lfm`）、以及行为不可预测的 `openrouter/free` 路由器。
+剩下的按偏好权重挑：
+
+```
+qwen3 > gemma-4-31b > nemotron-3-super > 星辰 > minimax > inkling-small > lightning > …
+```
+
+权重看的是**中文表达和指令遵循**——Sprig 的 prompt 要求模型输出 `⟦术语⟧` 标记，太小的模型经常不守格式。
+不按上下文长度选，因为免费层里 1M 窗口的往往是大参数模型（如 inkling 975B），慢且容易撞限额。
+一个规则都不匹配时才按上下文长度兜底。
+
+这套规则有单元测试兜着（`Tests/SprigCoreTests/FreeModelCatalogTests.swift`），清单每周变也能保证不会选到奇怪的东西。
+
+**领 Key**：清单不需要 Key，但推理需要。设置页 API Key 那行右侧有「去获取」，点了直接打开对应页面：
+
+| 接入 | 跳转 |
+|---|---|
+| OpenRouter 免费 | [openrouter.ai/keys](https://openrouter.ai/keys)（免费层约 20 次/分钟、50 次/天，充值满 $10 后 1,000 次/天） |
+| Gemini | [aistudio.google.com/apikey](https://aistudio.google.com/apikey)（免费层约 10–15 次/分钟） |
+| Ollama / 未知网关 | 不显示按钮 |
 
 之后 app 每小时检查一次，距上次同步超过 24 小时就重新拉：
 
@@ -114,10 +136,6 @@ Base URL 填到 `/v1` 或只填域名都能识别，`https://x/v1` 不会被拼�
 - 接入已经被删掉 → 不会重新加回来（标了 `isBuiltin`，正常路径删不掉）
 
 设置页「同步免费」按钮可以随时手动刷新，右侧会显示当前可用数量。
-
-**调用仍然需要 OpenRouter 的 Key**（清单不需要，但推理需要）：去
-[openrouter.ai/keys](https://openrouter.ai/keys) 领一个填进这条接入即可。免费层限制约
-20 次/分钟、50 次/天，账号历史上充值满 $10 后提到 1,000 次/天。
 
 ## 配置
 
