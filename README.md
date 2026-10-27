@@ -177,6 +177,11 @@ macOS 26 (Tahoe) 把第三方菜单栏项收归 ControlCenter 管理，并加了
 3. 确认没被刘海挡住：菜单栏太挤时图标会被塞到刘海下面，没有任何提示。
    收紧间距可以腾出空间（社区方案，本机未验证效果）：
    `defaults -currentHost write -globalDomain NSStatusItemSpacing -int 6`，然后重新登录。
+4. 如果系统设置里根本找不到本 app 的条目，或者打开了仍然不显示——**换一个 bundle id** 是最直接的办法。
+   本项目就靠这招解决过一次：`com.catking.sprig` → `com.catking.sprig.app`。
+   新 id 在系统里是全新条目，默认允许；`Settings.migrateLegacyDefaultsIfNeeded` 会把旧域的
+   快捷键、接入配置、知识库目录整体搬过来，用户无感（迁移后 `defaults read com.catking.sprig.app`
+   能看到 `migratedFromBundle` 记录来源）。
 
 **`killall SystemUIServer`、`killall ControlCenter`、重启电脑都不会重置这道授权**——授权是持久化的，
 只在系统设置里能改。图标消失先查第 1 条，不要怀疑代码。

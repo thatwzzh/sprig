@@ -164,6 +164,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let button = item.button {
             // 矢量绘制，深浅菜单栏由 isTemplate 自动反色
             button.image = BrandMark.image()
+            button.imagePosition = .imageOnly
             button.toolTip = AppInfo.name
         }
 
@@ -186,6 +187,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         item.menu = menu
         statusItem = item
+
     }
 
     @objc private func openPanel() {

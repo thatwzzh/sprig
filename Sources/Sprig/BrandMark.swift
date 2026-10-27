@@ -23,6 +23,8 @@ M 31.16 57.29 L 30.94 56.49 L 30.77 55.68 L 30.64 54.87 L 30.53 54.05 L 30.44 53
         return image
     }
 
+    static func debugPaths() -> [NSBezierPath] { paths() }
+
     private static func paths() -> [NSBezierPath] {
         var result: [NSBezierPath] = []
         var current: NSBezierPath?

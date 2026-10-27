@@ -140,16 +140,21 @@ enum Settings {
         guard !defaults.bool(forKey: migratedKey) else { return }
         defaults.set(true, forKey: migratedKey)
 
-        guard let legacy = UserDefaults(suiteName: AppInfo.legacyBundleIdentifier) else { return }
-        for (key, value) in legacy.dictionaryRepresentation() where isMigratableKey(key) {
-            guard defaults.object(forKey: key) == nil else { continue }
-            defaults.set(value, forKey: key)
+        for identifier in AppInfo.legacyBundleIdentifiers {
+            guard let legacy = UserDefaults(suiteName: identifier) else { continue }
+            for (key, value) in legacy.dictionaryRepresentation() where isMigratableKey(key) {
+                guard defaults.object(forKey: key) == nil else { continue }
+                defaults.set(value, forKey: key)
+            }
+            defaults.set(identifier, forKey: "migratedFromBundle")
+            break   // 只搬最近的一个有数据的旧域
         }
     }
 
+    /// 系统写入的键（NS*/Apple*）不搬，其余自有设置整份搬过来
     private static func isMigratableKey(_ key: String) -> Bool {
-        if key.hasPrefix("KeyboardShortcuts") { return true }
-        return key == legacyModelKey || key == legacyBaseURLKey || key == cardsDirectoryKey
+        if key.hasPrefix("NS") || key.hasPrefix("Apple") || key == migratedKey { return false }
+        return true
     }
 
     /// 默认目录从 ~/Documents/a 换成 ~/Documents/Sprig 后，把旧默认目录里的库搬过去。

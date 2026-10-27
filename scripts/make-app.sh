@@ -30,7 +30,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleExecutable</key>
     <string>Sprig</string>
     <key>CFBundleIdentifier</key>
-    <string>com.catking.sprig</string>
+    <string>com.catking.sprig.app</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleInfoDictionaryVersion</key>

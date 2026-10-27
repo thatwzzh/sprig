@@ -29,7 +29,11 @@ kill_all() {
 # 尽量不用 -9：反复强杀容易把系统菜单栏对这个 app 的登记状态弄坏。
 BEFORE=$(running_count)
 if [ "$BEFORE" -gt 0 ]; then
-    osascript -e "tell application id \"com.catking.sprig\" to quit" >/dev/null 2>&1 || true
+    # bundle id 从 Info.plist 读，改包名时不用跟着改脚本
+    BUNDLE_ID=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP/Contents/Info.plist" 2>/dev/null || echo "")
+    if [ -n "$BUNDLE_ID" ]; then
+        osascript -e "tell application id \"${BUNDLE_ID}\" to quit" >/dev/null 2>&1 || true
+    fi
     sleep 0.8
 fi
 if [ "$(running_count)" -gt 0 ]; then
