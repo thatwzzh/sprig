@@ -89,6 +89,19 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
 
         content.onTreeToggle = { [weak self] in self?.toggleTree() }
 
+        content.modelButton.target = self
+        content.modelButton.action = #selector(showModelMenu)
+        refreshModelButton()
+
+        // 设置页改了接入配置 / 在其他地方切了模型，按钮跟着更新
+        NotificationCenter.default.addObserver(
+            forName: .sprigProvidersDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            DispatchQueue.main.async { self?.refreshModelButton() }
+        }
+
         // 滚动后选区矩形失效，动作条先收起，避免浮在错误位置
         content.answerScroll.contentView.postsBoundsChangedNotifications = true
         scrollObserver = NotificationCenter.default.addObserver(
@@ -285,7 +298,7 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
 
     private func measuredInputHeight() -> CGFloat {
         measuredHeight(for: inputView,
-                       width: Theme.panelWidth - Theme.horizontalInset * 2,
+                       width: Theme.inputTextWidth,
                        min: Theme.inputMinHeight,
                        max: Theme.inputMaxHeight)
     }
@@ -333,7 +346,7 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
                            bottom: answerHeight > 0 ? bottomHeight : 0)
 
         inputView.frame = NSRect(x: 0, y: 0,
-                                 width: max(1, Theme.panelWidth - Theme.horizontalInset * 2),
+                                 width: max(1, Theme.inputTextWidth),
                                  height: max(inputHeight, 24))
         bottomInput.frame = NSRect(x: 0, y: 0,
                                    width: max(1, Theme.panelWidth - Theme.horizontalInset * 2),
@@ -437,6 +450,56 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         }
     }
 
+    // MARK: - 模型切换
+
+    private func refreshModelButton() {
+        let config = Settings.activeConfig
+        content.modelButton.label = config.modelLabel
+        content.modelButton.toolTip = "\(config.displayName) · \(config.modelLabel)"
+    }
+
+    @objc private func showModelMenu() {
+        // 菜单从按钮下沿展开
+        makeModelMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: -4), in: content.modelButton)
+    }
+
+    /// 所有接入排成一列，当前使用的打勾；底部入口进设置页
+    private func makeModelMenu() -> NSMenu {
+        let configs = Settings.providerConfigs
+        let activeID = Settings.activeProviderID
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+
+        for config in configs {
+            let title = config.isConfigured
+                ? "\(config.displayName) · \(config.modelLabel)"
+                : "\(config.displayName) · \(config.modelLabel)（未配置）"
+            let item = NSMenuItem(title: title, action: #selector(selectProvider(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = config.id.uuidString
+            item.state = config.id == activeID ? .on : .off
+            menu.addItem(item)
+        }
+
+        menu.addItem(.separator())
+        let manage = NSMenuItem(title: "管理模型接入…", action: #selector(openModelSettings), keyEquivalent: "")
+        manage.target = self
+        menu.addItem(manage)
+        return menu
+    }
+
+    @objc private func selectProvider(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let id = UUID(uuidString: raw) else { return }
+        Settings.selectProvider(id: id)
+        refreshModelButton()
+        panel.makeKey()
+    }
+
+    @objc private func openModelSettings() {
+        SettingsWindowController.shared.present()
+    }
+
     // MARK: - 键盘
 
     /// LSUIElement 应用没有菜单栏，⌘C/⌘V 这类标准编辑动作没有菜单项转发就没人接。
@@ -528,7 +591,7 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         // 回退到父卡位置再挂子卡，避免在祖先链之外分叉
         stack.removeSubrange((parentIndex + 1)...)
         let context = ContextAssembler.context(path: contextPath(upTo: parentIndex),
-                                               policy: .forProvider(Settings.provider.id))
+                                               policy: .forLocal(Settings.provider.isLocal))
 
         let card = AnswerCard(parentID: parentID,
                               title: title,
@@ -588,6 +651,23 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
     // MARK: - 流式
 
     private func startStreaming(messages: [ChatMessage]) {
+        // 没填 key 就不发请求了，否则用户只能看到一条 401，比直接说清楚难懂得多
+        let config = Settings.activeConfig
+        guard config.isConfigured else {
+            isStreaming = false
+            answerView.clearThinkingPlaceholder()
+            let message = "\n\n⚠️ 「\(config.displayName)」还没配好："
+                + (config.kind.needsAPIKey ? "缺 API Key。" : "模型名是空的。")
+                + "\n点右上角的模型按钮切一个能用的，或进「设置…」补上后重试。"
+            apply(.text(message))
+            if !stack.isEmpty { stack[stack.count - 1].raw += message }
+            answerHeight = measuredAnswerHeight()
+            applyHeights(animated: true)
+            answerView.scrollToBottom()
+            persistCurrentCard()
+            return
+        }
+
         isStreaming = true
         parser = TermParser()
         pendingSegments.removeAll()
@@ -655,13 +735,28 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
     private func failStreaming(_ error: Error) {
         isStreaming = false
         answerView.clearThinkingPlaceholder()
-        let message = "\n\n⚠️ \(error.localizedDescription)\n本地模型没起来时，先在终端跑一次 `ollama serve`，并确认模型名（当前：\(Settings.model)）已 pull 到本地。"
+        let config = Settings.activeConfig
+        let message = "\n\n⚠️ \(error.localizedDescription)\n\(troubleshootingHint(for: config))"
         apply(.text(message))
         if !stack.isEmpty { stack[stack.count - 1].raw += message }
         answerHeight = measuredAnswerHeight()
         applyHeights(animated: true)
         answerView.scrollToBottom()
         persistCurrentCard()
+    }
+
+    /// 报错时给一句能立刻照做的排查方向，而不是只有原始 HTTP 文本
+    private func troubleshootingHint(for config: ProviderConfig) -> String {
+        switch config.kind {
+        case .ollama:
+            return "本地模型没起来时，先在终端跑一次 `ollama serve`，并确认模型名（当前：\(config.modelLabel)）已 pull 到本地。"
+        case .gemini:
+            return "当前接入：\(config.displayName) · \(config.modelLabel)。"
+                + "若提示 429，是免费额度用完了（约 10–15 次/分钟），等一会儿再试；"
+                + "若提示 400/403，多半是 API Key 无效或该模型不在免费层。"
+        case .openAICompatible:
+            return "检查 Base URL（当前：\(config.baseURL)）、API Key 和模型名（当前：\(config.modelLabel)）。"
+        }
     }
 
     private func cancelStreaming() {
@@ -980,6 +1075,12 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         print("questionHeader     =", content.questionHeader.frame, "| text:", content.questionHeader.debugText)
         print("bottomScroll.frame =", content.bottomScroll.frame)
         print("answerScroll.frame =", content.answerScroll.frame)
+        print("inputScroll.frame  =", content.inputScroll.frame)
+        print("modelButton.frame  =", content.modelButton.frame)
+        print("modelButton.label  =", content.modelButton.label)
+        print("modelMenu.items    =", makeModelMenu().items.map(\.title))
+        print("providers.count    =", Settings.providerConfigs.count)
+        print("active.isLocal     =", Settings.provider.isLocal)
         print("stack.depth        =", stack.count)
 
         go(to: 0)

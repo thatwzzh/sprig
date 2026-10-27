@@ -1,30 +1,101 @@
 import Foundation
 import SprigCore
 
+extension Notification.Name {
+    /// 模型接入配置变化（设置页改动、切换模型、新增/删除接入）
+    static let sprigProvidersDidChange = Notification.Name("sprigProvidersDidChange")
+}
+
 enum Settings {
-    private static let modelKey = "ollamaModel"
-    private static let baseURLKey = "ollamaBaseURL"
+    private static let providersKey = "providerConfigs"
+    private static let activeProviderKey = "activeProviderID"
     private static let cardsDirectoryKey = "cardsDirectory"
     private static let migratedKey = "didMigrateFromLegacyBundle"
 
-    static let defaultModel = "qwen3:4b-instruct"
+    /// 旧版本只有单模型设置。留着只做两件事：迁移老配置、判断「是不是老用户」。
+    private static let legacyModelKey = "ollamaModel"
+    private static let legacyBaseURLKey = "ollamaBaseURL"
 
-    static var model: String {
+    static let defaultModel = ProviderConfig.Kind.ollama.defaultModel
+
+    // MARK: - 模型接入
+
+    /// 全部接入配置。没存过时给出内置的 Gemini + Ollama 两条。
+    static var providerConfigs: [ProviderConfig] {
         get {
-            // 便于 --headless 调试时临时换模型：SPRIG_MODEL=qwen3:4b-instruct
-            let env = ProcessInfo.processInfo.environment
-            if let override = env["SPRIG_MODEL"] ?? env["CONCEPTLENS_MODEL"], !override.isEmpty {
-                return override
+            if let data = UserDefaults.standard.data(forKey: providersKey),
+               let decoded = try? JSONDecoder().decode([ProviderConfig].self, from: data),
+               !decoded.isEmpty {
+                return decoded
             }
-            return UserDefaults.standard.string(forKey: modelKey) ?? defaultModel
+            return ProviderConfig.builtins(ollamaModel: legacyModel, ollamaBaseURL: legacyBaseURL)
         }
-        set { UserDefaults.standard.set(newValue, forKey: modelKey) }
+        set {
+            let value = newValue.isEmpty ? ProviderConfig.builtins(ollamaModel: legacyModel, ollamaBaseURL: legacyBaseURL) : newValue
+            guard let data = try? JSONEncoder().encode(value) else { return }
+            UserDefaults.standard.set(data, forKey: providersKey)
+            NotificationCenter.default.post(name: .sprigProvidersDidChange, object: nil)
+        }
     }
 
-    static var baseURL: URL {
-        let raw = UserDefaults.standard.string(forKey: baseURLKey) ?? "http://127.0.0.1:11434"
-        return URL(string: raw) ?? URL(string: "http://127.0.0.1:11434")!
+    /// 当前使用的接入。存的是 UUID 字符串。
+    static var activeProviderID: UUID {
+        get {
+            let configs = providerConfigs
+            if let raw = UserDefaults.standard.string(forKey: activeProviderKey),
+               let uuid = UUID(uuidString: raw),
+               configs.contains(where: { $0.id == uuid }) {
+                return uuid
+            }
+            return defaultProviderID
+        }
+        set {
+            UserDefaults.standard.set(newValue.uuidString, forKey: activeProviderKey)
+            NotificationCenter.default.post(name: .sprigProvidersDidChange, object: nil)
+        }
     }
+
+    /// 老用户（上一版写死 Ollama）继续用 Ollama，新装用户默认免费 Gemini。
+    private static var defaultProviderID: UUID {
+        if UserDefaults.standard.object(forKey: legacyModelKey) != nil {
+            return ProviderConfig.builtinOllamaID
+        }
+        return ProviderConfig.builtinGeminiID
+    }
+
+    static var activeConfig: ProviderConfig {
+        let configs = providerConfigs
+        let id = activeProviderID
+        var config = configs.first(where: { $0.id == id }) ?? configs[0]
+        // 便于 --headless 调试时临时换模型：SPRIG_MODEL=gemini-2.5-flash
+        let env = ProcessInfo.processInfo.environment
+        if let override = env["SPRIG_MODEL"] ?? env["CONCEPTLENS_MODEL"], !override.isEmpty {
+            config.model = override
+        }
+        return config
+    }
+
+    static var provider: LLMProvider {
+        activeConfig.makeProvider()
+    }
+
+    static func selectProvider(id: UUID) {
+        guard providerConfigs.contains(where: { $0.id == id }) else { return }
+        activeProviderID = id
+    }
+
+    /// 把探测到的 Ollama 模型写进内置 Ollama 项。
+    /// 只在用户没手动改过（仍是默认模型名）时生效，避免覆盖用户设置。
+    static func adoptDetectedOllamaModels(_ models: [String]) {
+        guard let preferred = models.first(where: { $0.hasPrefix("qwen3") }) ?? models.first else { return }
+        var configs = providerConfigs
+        guard let index = configs.firstIndex(where: { $0.kind == .ollama }),
+              configs[index].model == ProviderConfig.Kind.ollama.defaultModel else { return }
+        configs[index].model = preferred
+        providerConfigs = configs
+    }
+
+    // MARK: - 知识库目录
 
     /// 知识库（卡片 JSON）所在目录，默认 ~/Documents/Sprig
     static var defaultCardsDirectory: URL {
@@ -51,8 +122,14 @@ enum Settings {
         set { UserDefaults.standard.set(newValue.path, forKey: cardsDirectoryKey) }
     }
 
-    static var provider: LLMProvider {
-        OllamaProvider(baseURL: baseURL, model: model)
+    // MARK: - 旧设置
+
+    private static var legacyModel: String {
+        UserDefaults.standard.string(forKey: legacyModelKey) ?? ""
+    }
+
+    private static var legacyBaseURL: String {
+        UserDefaults.standard.string(forKey: legacyBaseURLKey) ?? ""
     }
 
     /// 包名从 com.catking.conceptlens 换成 com.catking.sprig 后，UserDefaults 域也跟着换了，
@@ -72,7 +149,7 @@ enum Settings {
 
     private static func isMigratableKey(_ key: String) -> Bool {
         if key.hasPrefix("KeyboardShortcuts") { return true }
-        return key == modelKey || key == baseURLKey || key == cardsDirectoryKey
+        return key == legacyModelKey || key == legacyBaseURLKey || key == cardsDirectoryKey
     }
 
     /// 默认目录从 ~/Documents/a 换成 ~/Documents/Sprig 后，把旧默认目录里的库搬过去。

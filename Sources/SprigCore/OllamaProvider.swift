@@ -2,8 +2,10 @@ import Foundation
 
 /// Ollama 的 /api/chat，NDJSON 流式。不引 SDK，60 行足够。
 public struct OllamaProvider: LLMProvider {
-    public let id = "ollama"
-    public let displayName = "Ollama（本地）"
+    public let id: String
+    public let displayName: String
+    /// 本机跑，上下文窗口小
+    public var isLocal: Bool { true }
 
     public var baseURL: URL
     public var model: String
@@ -11,9 +13,13 @@ public struct OllamaProvider: LLMProvider {
 
     private let session: URLSession
 
-    public init(baseURL: URL = URL(string: "http://127.0.0.1:11434")!,
+    public init(id: String = "ollama",
+                displayName: String = "Ollama（本地）",
+                baseURL: URL = URL(string: "http://127.0.0.1:11434")!,
                 model: String,
                 temperature: Double = 0.3) {
+        self.id = id
+        self.displayName = displayName
         self.baseURL = baseURL
         self.model = model
         self.temperature = temperature

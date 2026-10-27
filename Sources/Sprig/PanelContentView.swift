@@ -22,6 +22,7 @@ final class PanelContentView: NSView {
     let selectionBar = SelectionActionBar()
     let tree = KnowledgeTreeView()
     let treeToggle = PointerButton()
+    let modelButton = ModelPickerButton()
 
     var onTreeToggle: (() -> Void)?
 
@@ -92,6 +93,8 @@ final class PanelContentView: NSView {
         treeToggle.action = #selector(handleTreeToggle)
         treeToggle.toolTip = "展开知识树（⌘⇧T）"
         addSubview(treeToggle)
+
+        addSubview(modelButton)
 
         treeDivider.wantsLayer = true
         treeDivider.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.08).cgColor
@@ -194,14 +197,22 @@ final class PanelContentView: NSView {
             tree.frame = NSRect(x: width + 1, y: 0, width: Theme.treeWidth - 1, height: bounds.height)
         }
 
-        treeToggle.frame = NSRect(x: width - Theme.horizontalInset - 22,
+        let rightEdge = width - Theme.horizontalInset
+        treeToggle.frame = NSRect(x: rightEdge - Theme.treeToggleSize,
                                   y: bounds.height - 34,
-                                  width: 22, height: 22)
-        let inputRightPadding: CGFloat = treeToggle.isHidden ? 0 : 26
+                                  width: Theme.treeToggleSize,
+                                  height: Theme.treeToggleSize)
+
+        // 模型按钮贴在输入框右下角：单行输入时正好垂直居中，多行时留在底部
+        let pickerY = top - inputHeight + (Theme.inputMinHeight - ModelPickerButton.height) / 2
+        modelButton.frame = NSRect(x: rightEdge - Theme.treeToggleSize - Theme.modelButtonGap - ModelPickerButton.width,
+                                   y: pickerY,
+                                   width: ModelPickerButton.width,
+                                   height: ModelPickerButton.height)
 
         inputScroll.frame = NSRect(x: Theme.horizontalInset,
                                    y: top - inputHeight,
-                                   width: width - Theme.horizontalInset * 2 - inputRightPadding,
+                                   width: width - Theme.horizontalInset * 2 - Theme.inputAccessoryWidth,
                                    height: inputHeight)
         top -= inputHeight
 

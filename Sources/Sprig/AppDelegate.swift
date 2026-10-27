@@ -55,14 +55,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        // 本机装了 Ollama 就顺手把模型名对齐，省得用户手填。
+        // 只碰内置 Ollama 那一项，用户自己加的接入不碰。
         Task.detached {
-            let models = await OllamaProvider.availableModels(baseURL: Settings.baseURL)
+            guard let ollama = Settings.providerConfigs.first(where: { $0.kind == .ollama }),
+                  let base = URL(string: ollama.baseURL) else { return }
+            let models = await OllamaProvider.availableModels(baseURL: base)
             guard !models.isEmpty else { return }
             await MainActor.run {
-                if UserDefaults.standard.string(forKey: "ollamaModel") == nil,
-                   let preferred = models.first(where: { $0.hasPrefix("qwen3.5:9b") }) ?? models.first {
-                    Settings.model = preferred
-                }
+                Settings.adoptDetectedOllamaModels(models)
             }
         }
 
@@ -88,6 +89,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 PanelController.shared.debugTreeDump(filter: filter)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                     NSApp.terminate(nil)
+                }
+            }
+            return
+        }
+        if arguments.contains("--settings") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                SettingsWindowController.shared.present()
+                if arguments.contains("--dump") {
+                    SettingsWindowController.shared.debugDump()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        NSApp.terminate(nil)
+                    }
                 }
             }
             return

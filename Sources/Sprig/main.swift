@@ -20,7 +20,7 @@ if CommandLine.arguments.contains("--headless-child") {
         典型流程：查询 → 检索相关文档 → 生成回答。
         """
         let message = Prompt.childMessage(context: context, selection: "幻觉", question: nil)
-        let provider = OllamaProvider(baseURL: Settings.baseURL, model: Settings.model)
+        let provider = Settings.provider
         do {
             for try await chunk in provider.stream(messages: [
                 .system(Prompt.contextual),
@@ -44,7 +44,7 @@ if let index = CommandLine.arguments.firstIndex(of: "--headless"), index + 1 < C
 
     Task {
         var parser = TermParser()
-        let provider = OllamaProvider(baseURL: Settings.baseURL, model: Settings.model)
+        let provider = Settings.provider
         do {
             let messages: [ChatMessage] = [.system(Prompt.answer), .user(question)]
             for try await chunk in provider.stream(messages: messages) {

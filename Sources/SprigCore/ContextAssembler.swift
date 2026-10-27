@@ -42,11 +42,8 @@ public enum ContextAssembler {
                                          distantAnswerLimit: 800,
                                          maxAncestors: 12)
 
-        public static func forProvider(_ providerID: String) -> Policy {
-            switch providerID {
-            case "ollama": return .local
-            default: return .cloud
-            }
+        public static func forLocal(_ isLocal: Bool) -> Policy {
+            isLocal ? .local : .cloud
         }
     }
 

@@ -4,7 +4,13 @@ import Foundation
 public protocol LLMProvider: Sendable {
     var id: String { get }
     var displayName: String { get }
+    /// 本机推理的模型：上下文窗口小、对长输入更敏感，装上下文时用紧一点的预算
+    var isLocal: Bool { get }
     func stream(messages: [ChatMessage]) -> AsyncThrowingStream<String, Error>
+}
+
+public extension LLMProvider {
+    var isLocal: Bool { false }
 }
 
 public enum LLMError: LocalizedError, Sendable {

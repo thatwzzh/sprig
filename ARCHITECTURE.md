@@ -39,7 +39,7 @@
 ┌───────────────────────────▼─────────────────────────────────┐
 │  SprigCore（无 UI，可单测）                                 │
 │                                                              │
-│  LLMProvider(protocol) ← OllamaProvider（NDJSON 流式）        │
+│  LLMProvider(protocol) ← Ollama / OpenAI 兼容 / Gemini         │
 │  TermParser        ⟦术语⟧ 流式状态机                          │
 │  ContextAssembler  按 Policy 预算拼上下文                     │
 │  Prompt            系统提示词 / 子卡消息模板                   │
@@ -64,10 +64,14 @@ UI 层不直接读文件，Core 层不 import AppKit——这条边界让「解�
 | `SelectionActionBar` | 选区动作条 | 面板内浮层，避免独立窗口抢 key window |
 | `ConfirmDialog` | 删除确认 | 自绘圆角卡片，无图标；`NSApp.runModal` 应用级 modal，居中在面板上；← → 切换选中，默认选中「删除」 |
 | `PointerCursor` | 指针样式 | 可点击控件 hover 显示手型光标（`PointerButton`） |
+| `ModelPickerButton` | 模型切换 | 输入框右侧胶囊，固定宽度避免文字换行导致布局抖动 |
 | `TermParser` | 流式解析 | 未闭合持有、换行/超长降级、嵌套重开 |
 | `ContextAssembler` | 上下文 | 本地/线上两套预算策略 |
 | `CardStore` | 存储 | `actor`，JSON 原子写入；删除级联 |
-| `OllamaProvider` | 模型 | `think:false`、`num_ctx:8192`、`keep_alive:30m` |
+| `ProviderConfig` | 接入配置 | 名称/协议/Base URL/API Key/模型，Codable 存 UserDefaults |
+| `OllamaProvider` | 模型 | NDJSON；`think:false`、`num_ctx:8192`、`keep_alive:30m` |
+| `OpenAICompatibleProvider` | 模型 | SSE；`/v1/chat/completions`，Base URL 自动归一化 |
+| `GeminiProvider` | 模型 | 原生 SSE；`systemInstruction` + `x-goog-api-key` |
 
 ## 4. 数据流
 
@@ -155,9 +159,11 @@ struct AnswerCard {
 
 ## 6. 上下文装配
 
-`ContextAssembler.Policy` 按 provider 分两套预算（单位：字符）：
+`ContextAssembler.Policy` 按「本地 / 线上」分两套预算（单位：字符）。
+判断依据是 `LLMProvider.isLocal`——Ollama 为 true，其余为 false。用布尔值而不是 provider id，
+是因为接入配置的主键是 UUID，按字符串匹配会在用户新增接入后失效：
 
-| 参数 | 本地 `ollama` | 线上 |
+| 参数 | 本地（Ollama） | 线上 |
 |---|---|---|
 | 总预算 | 2400 | 12000 |
 | 当前回答 | 1200 | 6000 |
@@ -268,8 +274,9 @@ UI 无法截图时的替代方案（本机没有屏幕录制权限）：
 
 ## 13. 扩展点
 
-- **新增 provider**：实现 `LLMProvider`（`id` + `stream(messages:)`），在 `Settings.provider` 里分支即可；
-  上下文策略按 `provider.id` 自动切换（`ContextPolicy.forProvider`）。
+- **新增 provider**：实现 `LLMProvider`（`id` + `displayName` + `stream(messages:)`，本机推理再盖 `isLocal`），
+  在 `ProviderConfig.makeProvider()` 里加一个分支；配置、UI、菜单都不必动。
+  上下文策略按 `provider.isLocal` 自动切换（`ContextAssembler.Policy.forLocal`）。
 - **换存储**：只改 `CardStore` 的七个方法实现。
 - **加检索**：卡片树已经是 `parentID` 结构，加 embedding 字段 + top-k 检索，接在 `ContextAssembler` 之前。
 - **加复习**：`AnswerCard` 是纯数据，可外挂 `dueAt/interval` 而不影响现有树。
@@ -287,6 +294,8 @@ main.swift
                  │                   │                    ├─ SelectionActionBar
                  │                   │                    └─ KnowledgeTreeView
                  │                   ├─ CardStore (actor)
-                 │                   └─ Settings ── OllamaProvider
+                 │                   └─ Settings ── ProviderConfig ──┬─ OllamaProvider
+                 │                                                  ├─ OpenAICompatibleProvider
+                 │                                                  └─ GeminiProvider
                  └─ SettingsWindowController
 ```
