@@ -1,0 +1,63 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Xcode
+DerivedData/
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+timeline.xctimeline
+playground.xcworkspace
+
+# Swift Package Manager
+.build/
+.swiftpm/
+.netrc
+
+# 构建产物（scripts/make-app.sh 输出目录）
+build/
+dist/
+*.app
+
+# 编辑器 / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.cursor/
+
+# 依赖与缓存
+node_modules/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 日志与临时文件
+*.log
+*.tmp
+*.bak
+tmp/
+temp/
+
+# 环境变量与密钥
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+
+# AI 协作文档（本地工作记录，不入库）
+.workbuddy/

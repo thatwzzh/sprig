@@ -1,0 +1,182 @@
+import AppKit
+import SprigCore
+import KeyboardShortcuts
+
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var statusItem: NSStatusItem?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.accessory)
+
+        // 包名换到 com.catking.sprig 之前，先把旧域里的设置/快捷键搬过来
+        Settings.migrateLegacyDefaultsIfNeeded()
+        // 默认知识库目录改成 ~/Documents/Sprig，把老默认位置的数据带过来
+        Settings.prepareCardsDirectory()
+
+        setupMainMenu()
+        setupStatusItem()
+        PanelController.shared.prewarm()
+
+        KeyboardShortcuts.onKeyUp(for: .togglePanel) {
+            PanelController.shared.toggle()
+        }
+
+        KeyboardShortcuts.onKeyUp(for: .toggleTree) {
+            PanelController.shared.toggleTreeShortcut()
+        }
+
+        // 知识库目录来自设置（默认 ~/Documents/Sprig）；首次切换时 CardStore 会把旧数据搬过去
+        Task.detached(priority: .userInitiated) {
+            await CardStore.shared.useDirectory(Settings.cardsDirectory)
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            // 切到别的 App：面板沉底但不隐藏（由 PanelController 统一处理）
+            DispatchQueue.main.async {
+                PanelController.shared.hideIfUnfocused()
+            }
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification,
+            object: nil,
+            queue: .main
+        ) { note in
+            // 过滤器放到主队列闭包里：这里不是 MainActor 上下文，直接读 panel 会告警
+            DispatchQueue.main.async {
+                guard let window = note.object as? NSWindow,
+                      window === PanelController.shared.panel else { return }
+                PanelController.shared.hideIfUnfocused()
+            }
+        }
+
+        Task.detached {
+            let models = await OllamaProvider.availableModels(baseURL: Settings.baseURL)
+            guard !models.isEmpty else { return }
+            await MainActor.run {
+                if UserDefaults.standard.string(forKey: "ollamaModel") == nil,
+                   let preferred = models.first(where: { $0.hasPrefix("qwen3.5:9b") }) ?? models.first {
+                    Settings.model = preferred
+                }
+            }
+        }
+
+        handleDebugArguments()
+    }
+
+    /// 仅用于本机冒烟测试：`Sprig --show` / `--ask "问题"` / `--selftest`
+    private func handleDebugArguments() {
+        let arguments = CommandLine.arguments
+        if arguments.contains("--selftest") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                PanelController.shared.debugSelfTest()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    NSApp.terminate(nil)
+                }
+            }
+            return
+        }
+        if arguments.contains("--tree-dump") {
+            let filterIndex = arguments.firstIndex(of: "--tree-filter")
+            let filter = filterIndex.flatMap { $0 + 1 < arguments.count ? arguments[$0 + 1] : nil }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                PanelController.shared.debugTreeDump(filter: filter)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                    NSApp.terminate(nil)
+                }
+            }
+            return
+        }
+        if let index = arguments.firstIndex(of: "--ask"), index + 1 < arguments.count {
+            let question = arguments[index + 1]
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                PanelController.shared.debugAsk(question)
+                if arguments.contains("--tree") {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        PanelController.shared.toggleTree()
+                    }
+                }
+            }
+        } else if arguments.contains("--tree") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                PanelController.shared.show()
+                PanelController.shared.toggleTree()
+            }
+        } else if arguments.contains("--show") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                PanelController.shared.show()
+            }
+        }
+    }
+
+    /// LSUIElement 应用平时不显示菜单栏，但设置窗口激活时仍需要标准编辑动作，
+    /// 而且菜单项的快捷键等价物是 ⌘C/⌘V 在 App 激活状态下的兜底通道。
+    private func setupMainMenu() {
+        let mainMenu = NSMenu()
+
+        let appItem = NSMenuItem()
+        mainMenu.addItem(appItem)
+        let appMenu = NSMenu()
+        appMenu.addItem(withTitle: "退出 \(AppInfo.name)",
+                        action: #selector(NSApplication.terminate(_:)),
+                        keyEquivalent: "q")
+        appItem.submenu = appMenu
+
+        let editItem = NSMenuItem()
+        mainMenu.addItem(editItem)
+        let editMenu = NSMenu(title: "编辑")
+        editMenu.addItem(withTitle: "撤销", action: Selector(("undo:")), keyEquivalent: "z")
+        editMenu.addItem(withTitle: "重做", action: Selector(("redo:")), keyEquivalent: "Z")
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "剪切", action: Selector(("cut:")), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "复制", action: Selector(("copy:")), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "粘贴", action: Selector(("paste:")), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "全选", action: Selector(("selectAll:")), keyEquivalent: "a")
+        editItem.submenu = editMenu
+
+        NSApp.mainMenu = mainMenu
+    }
+
+    private func setupStatusItem() {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        if let button = item.button {
+            // 矢量绘制，深浅菜单栏由 isTemplate 自动反色
+            button.image = BrandMark.image()
+            button.toolTip = AppInfo.name
+        }
+
+        // 菜单只留三件事：打开面板 / 设置 / 退出
+        let menu = NSMenu()
+        let openItem = NSMenuItem(title: "打开\(AppInfo.name)", action: #selector(openPanel), keyEquivalent: "")
+        openItem.target = self
+        menu.addItem(openItem)
+
+        menu.addItem(.separator())
+
+        let settingsItem = NSMenuItem(title: "设置…", action: #selector(openSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+
+        menu.addItem(.separator())
+
+        let quitItem = NSMenuItem(title: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        menu.addItem(quitItem)
+
+        item.menu = menu
+        statusItem = item
+    }
+
+    @objc private func openPanel() {
+        NSApp.activate(ignoringOtherApps: true)
+        PanelController.shared.show()
+    }
+
+    @objc private func openSettings() {
+        SettingsWindowController.shared.present()
+    }
+}
