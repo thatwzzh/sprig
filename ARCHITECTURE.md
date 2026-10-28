@@ -86,8 +86,10 @@ UI 层不直接读文件，Core 层不 import AppKit——这条边界让「解�
       persistCurrentCard()（先落空答案，保证树结构立刻存在）
   → startStreaming([system(answer), user(question)])
       URLSession.bytes → NDJSON 逐行 → yield(content)
-  → consume(chunk)
-      stack.last.raw += chunk
+  → consume(chunk, owner: cardID)
+      先看这张卡是不是当前显示的：
+        是 → stack.last.raw += chunk，走解析和渲染
+        否 → 只往 backgroundRaw[owner] 累积，不碰视图
       TermParser.consume(chunk) → [.text | .term]
       攒进 pendingSegments，40ms 节流
   → flushPendingSegments()
@@ -99,6 +101,45 @@ UI 层不直接读文件，Core 层不 import AppKit——这条边界让「解�
 
 三层缓冲的原因：网络 chunk 粒度是「几个字」，直接逐块改 `textStorage` 会触发高频重排；
 40ms 合并一次，视觉上仍是流式，但布局次数降一个量级。
+
+### 4.5 后台继续生成
+
+面板一次只显示一张卡，但流式请求可以有多条在跑。切换显示时不取消，转后台：
+
+```
+切换（新建根卡 / 树里点卡 / 面包屑回退）
+  → detachCurrentStreaming()
+      backgroundRaw[cardID] = stack.last.raw   ← 已渲染的部分作为起点
+      streamTask = nil，isStreaming = false
+      （注意：不调 cancel()，Task 会自己跑到底）
+
+后台期间
+  → consume(chunk, owner:) 判断 owner ≠ 当前卡 → 只累积
+
+收尾
+  → finish(owner:)
+      后台：写进 CardStore（用 card(id:) 确认卡还在，避免给已删的卡造幽灵）
+      前台：正常收尾
+```
+
+**哪些场景转后台、哪些仍然取消**：
+
+| 场景 | 处理 | 理由 |
+|---|---|---|
+| 新建根卡 | detach | 用户想看新问题，旧的不该陪葬 |
+| 树里切卡 / 面包屑回退 | detach | 只是换显示 |
+| 追问子卡 | **cancel** | 追问依赖父卡的完整内容 |
+| 清空面板 | cancel | |
+
+**切回一张还在跑的卡** → `adoptBackgroundIfNeeded`：
+
+1. 把 `backgroundRaw` 铺回节点，先渲染出来
+2. `parser = TermParser()` 吞掉已有内容但不产出（后续 chunk 只吐增量）
+3. 用另一个 parser 扫一遍填 `seenTerms`（否则术语下划线会重复）
+4. 清掉 `backgroundRaw[cardID]`，让后续 `consume` 走前台分支
+
+**关键约束**：`renderCurrent` 用的是独立的 `replay` parser 重放 raw，
+和流式用的 `parser` 是两套状态，所以「吞掉内容」不影响已渲染的部分。
 
 ### 4.2 术语解析状态机
 
@@ -247,7 +288,13 @@ total = inputHeight(46…96)
 
 - UI 全部 `@MainActor`；`PanelController` 是唯一状态所有者。
 - 流式用 `Task { @MainActor ... }`，`for try await` 挂起时不阻塞主线程。
-- 取消：切换卡片/导航前 `cancelStreaming()`，会把已收到的部分回答落盘。
+- 流式归属：每条流式任务带一个 `owner: UUID`（卡片 id）。渲染与否由
+  「owner 是不是当前显示的卡」决定，不是由「有没有 streamTask」决定——
+  后者只能记一条，多任务并行时会丢。
+- 取消：只有「追问子卡 / 清空面板」会 `cancelStreaming()`；
+  切换显示走 `detachCurrentStreaming()`，任务继续在后台跑完并落库。
+- 瞬时故障：TLS 握手失败 / 连接中断会先 `HTTPClient.resetSession()` 再重试——
+  `URLSession` 的连接池会缓存坏掉的 TLS 会话，不换池重试也是撞同一条。
 - `CardStore` 是 `actor`，调用方 `await`；写盘在 actor 内串行。
 - 树刷新是异步的：`reload()` 拉全量卡片后重建 `TreeNode`，卡片量小，不值得做增量。
 
@@ -261,6 +308,9 @@ total = inputHeight(46…96)
 | 确认框 | 内嵌条 | `NSAlert` | sheet 抢 key window、露直角 |
 | 划词入口 | 面板内选词 | 全局 AX 取词 + OCR | 省掉辅助功能权限与三级降级链 |
 | 输入语义 | 顶部=新根卡，底部=子卡 | 统一一个输入框 | 两个动作语义不同，混在一起用户无法预测 |
+| 流式切换 | 转后台继续跑 | 直接取消 | 半截答案没有价值，而且用户看不出是被打断的 |
+| 搜索结果 | 折叠成一行 + 点开菜单 | 平铺标题和域名 | 平铺会把正文切碎，读起来很吵 |
+| 免费模型 | 三家并列，按「越可能长期免费」排序 | 只留一家 | 免费政策变得比代码快，多留退路 |
 
 ## 11. 踩过的坑（都在代码里有注释）
 
@@ -280,6 +330,22 @@ total = inputHeight(46…96)
     症状极易误判成代码 bug：实测改图标宽度、去掉 `item.menu`、改 bundle id、改 app 名、精简 Info.plist、
     延迟创建、去 `prewarm`、`killall SystemUIServer` / ControlCenter / Dock 全部无效；
     同一份代码换个时间点启动有时能显示，是因为当时授权开关还开着。详见 README「菜单栏图标不见了」。
+12. **`NSTextContainer` 的宽度不能手动设成 `bounds.width`**：`widthTracksTextView = true` 时
+    NSTextView 自己会把它设成 `frame.width - inset*2`。手动接管会让文字右侧多出 16pt，
+    直接画到面板外面去（表现为行尾一两个字被裁）。**文字溢出先看容器尺寸，不是视图 frame。**
+    诊断：`--selftest` 会打印 `textContainer.size`，正确值应是 `frame.width - 32`。
+13. **`openAICompatible` 是个筐**：新增一家网关时，凡是按 `kind` 特判的地方都要复核。
+    踩过两次——`fetchFreeModels` 把所有 OpenAI 兼容都当成 OpenRouter，拉回了别人的模型清单；
+    路径拼接对所有 base 都补 `/v1`，智谱的 `/api/paas/v4` 变成 `/v4/v1/chat/completions`。
+    现在按 `baseURL` 是否含 `openrouter` / `bigmodel` 分流，并用 `hasVersionPrefix` 识别 `/v1` `/v3` `/v4`。
+14. **`NSTextField` 的 `controlTextDidEndEditing` 要等失焦才触发**，而按钮 action 先跑。
+    结果就是「填了 Key 点同步，Key 没了」——同步读到的还是旧值，同步完又把空值写回输入框。
+    → 所有「读表单再执行」的动作开头都先 `persistXxx()`。
+15. **后台任务的 raw 和 `stack.raw` 是两份**：收尾时用 `stack.raw` 判断「有没有内容」，
+    后台跑的那张一定是空的，于是误报「模型没有返回任何内容」。判断有无内容要看缓冲。
+16. **免费模型普遍限流**（产品层面，不是 bug）：智谱 GLM-4.7-Flash 实测成功率约 1/3，
+    Gemini 15 RPM 且要代理，OpenRouter 免费池高峰期大量 429。
+    app 能做的是重试 + 换模型 + 换 provider，但额度真没了只能等。README 里明确写了「仅供试用」。
 
 ## 12. 测试与调试
 

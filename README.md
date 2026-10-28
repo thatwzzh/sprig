@@ -1,9 +1,17 @@
 # 知枝 · Sprig
 
-一个 ⌥Space 唤起的 macOS 轻量问答面板：问一句就有答案，答案里的任何文字都能选中追问，
-每次追问都会在右侧知识树里长出一张子卡——知识像枝一样长出来，所以叫「知枝」。
+[![Stars](https://img.shields.io/github/stars/thatwzzh/sprig?style=flat-square&logo=github)](https://github.com/thatwzzh/sprig/stargazers)
+[![Downloads](https://img.shields.io/github/downloads/thatwzzh/sprig/total?style=flat-square)](https://github.com/thatwzzh/sprig/releases)
+[![License](https://img.shields.io/github/license/thatwzzh/sprig?style=flat-square)](LICENSE)
+[![Platform](https://img.shields.io/badge/macOS-14%2B-blue?style=flat-square)](https://www.apple.com/macos/)
 
-不是聊天客户端，也不是笔记软件——它只做一件事：**把「问」和「追问」之间的摩擦降到接近零**。
+**按一下 `⌥Space`，问一句，答案就出来了。答案里任何文字都能选中「解释」，每次解释都在右侧知识树里长出一张子卡——知识像枝一样长，所以叫「知枝」。**
+
+不是聊天客户端，也不是笔记软件。它只做一件事：**把「问」和「追问」之间的摩擦降到接近零**。
+
+### [⬇️ 下载](https://github.com/thatwzzh/sprig/releases)
+
+> 还没发布安装包时，可以按[从源码构建](#从源码构建)自己打包，两分钟。
 
 ```
 ┌────────────────────────────────────────────┬──────────────────┐
@@ -14,11 +22,88 @@
 ├────────────────────────────────────────────┼────── ▸ 检索      │
 │  RAG（检索增强生成）是结合检索与生成的…     │    ▸ 向量数据库   │
 │  它缓解了大语言模型的幻觉问题。             │                  │
-│  ┈┈┈ 选中任意文字 → [解释] [追问] ┈┈┈       │                  │
+│  ┈┈┈ 选中任意文字 → [解释] ┈┈┈              │                  │
 ├────────────────────────────────────────────┤                  │
 │  基于这张卡继续问…                          │                  │
 └────────────────────────────────────────────┴──────────────────┘
 ```
+
+## 这是什么
+
+一个常驻菜单栏的问答面板。和网页版 AI 的区别在于**知识会积累**：
+
+- 问第一个问题，得到一张根卡
+- 看到不认识的词，选中 → `解释`，长出一张子卡
+- 子卡再解释，再长——形成一棵可以回溯的知识树
+- 每张卡都记得自己在哪个上下文里诞生，追问时只带相关的祖先节点，不会一次性塞进整段对话
+
+数据全在本机（`~/Documents/Sprig/cards-v2.json`），不上传任何地方。模型调用直连你配置的服务商。
+
+## 安装
+
+**要求**：macOS 14 (Sonoma) 及以上。Apple Silicon 和 Intel 都能跑。
+
+1. 从 [Releases](https://github.com/thatwzzh/sprig/releases) 下载最新的 `.zip`
+2. 解压，把 `Sprig.app` 拖到「应用程序」
+3. 首次打开会提示"无法验证开发者"——去**系统设置 → 隐私与安全性**，点「仍要打开」
+
+   > 应用没有做代码签名（个人项目），这一步绕不过。介意的话可以自己编译。
+
+4. 打开后菜单栏会出现一枝嫩芽图标，按 `⌥Space` 唤起面板
+
+## 第一次配置：先给它一个能用的模型
+
+**没有配置模型时，面板会显示一条提示，点一下就能进设置页。**
+
+设置页分三类接入，从上到下：
+
+| 类别 | 说明 |
+|---|---|
+| **本地** | Ollama，跑在本机，完全免费 |
+| **免费** | 智谱 GLM / OpenRouter / Gemini，填个 Key 就能用 |
+| **自定义** | 任何 OpenAI 兼容服务（DeepSeek、OpenAI、火山方舟…） |
+
+填完 Key 点「测试连接」，看到「✓ 连接正常」就能用了。
+
+---
+
+### ⚠️ 关于免费模型：能用，但别指望它稳定
+
+这是必须先说清楚的一件事。**目前所有"免费"的 LLM 通道都在限流**，包括我们内置的这三个：
+
+| 通道 | 免费额度 | 实际体验 |
+|---|---|---|
+| 智谱 GLM-4.7-Flash | 官方标称永久免费、不限 token | **实测成功率约 1/3**，多数请求返回「访问量过大」 |
+| Gemini 免费层 | 约 10–15 次/分钟 | 频繁 429，且**国内需要代理**才能连上 |
+| OpenRouter 免费模型 | 共享上游池，约 20 次/分钟 | 高峰期大量 429 |
+
+**它们适合干什么**：装好之后试一下这个 app 是不是你想要的，问几个问题看看交互顺不顺手。
+
+**不适合干什么**：当日常主力。你会在"这个功能挺好用"和"怎么又 429 了"之间反复横跳。
+
+**为什么会这样**：免费额度是各家用来拉新的，容量池子就那么大，所有人共享。一旦某个模型开始被大量调用，排队就是必然的。
+
+### 那到底该用什么
+
+按你的使用频率选：
+
+| 你的情况 | 建议 | 成本 |
+|---|---|---|
+| 只是想试试 | 智谱或 Gemini 免费层，**多试几次** | 0 |
+| 每天都在用 | **DeepSeek**（自定义接入） | 按 token 计费，充 10 元能用几个月 |
+| 不想联网 / 数据敏感 | **本地 Ollama** | 0，代价是占内存 |
+| 已经在用 OpenAI | OpenAI API（自定义接入） | 按 token 计费 |
+
+**DeepSeek 是最推荐的付费选项**：国内直连不用代理、按量计费没有"每分钟多少次"的墙、`deepseek-chat` 一次问答大约几分钱。配置方式见[自定义接入](#自定义任何-openai-兼容服务)。
+
+**本地 Ollama 是唯一"绝对稳定且免费"的方案**：
+
+```bash
+brew install ollama          # 或从 ollama.com 下载
+ollama pull qwen3:4b-instruct   # 2.5 GB，24G 内存的机器很轻松
+```
+
+配好之后即使断网也能用。
 
 ## 核心交互
 
@@ -28,317 +113,231 @@
 | 提问（新根卡） | 顶部输入框，回车 |
 | 基于当前卡追问 | 底部输入框，回车（自动挂成子卡，带上下文） |
 | 解释选中文字 | 选中 → `解释`，立刻生成子卡并流式回答 |
-| 追问选中文字 | 选中 → `追问`，预填「关于「…」：」 |
 | 点术语直接展开 | 答案中带下划线的术语，单击即生成子卡 |
 | 返回父卡 | 点面包屑 / `⌘[` |
 | 知识树 | `⌘⇧T` 开关（设置里可重新录制）；`⌘F` 聚焦搜索（匹配标题与回答正文） |
 | 树内重命名 | 单击已选中的节点，或回车；失焦提交，`Esc` 取消 |
-| 树内删除 | hover 节点点垃圾桶，或 `⌘⌫`；模态弹窗确认（默认选中「删除」，← → 切换选中） |
-| 菜单栏图标 | 只有三项：打开知枝 / 设置… / 退出 |
-| 切换模型 | 输入框右侧的模型胶囊，点开选接入；「管理模型接入…」进设置页 |
+| 树内删除 | hover 节点点垃圾桶，或 `⌘⌫`；模态弹窗确认 |
+| 切换模型 | 输入框右侧的模型胶囊，点开选接入 |
+| 联网搜索开关 | 输入框右侧的地球仪，开着时变蓝 |
 | 复制答案 | 选中后 `⌘C` |
-| 失焦 / 收起 | `Esc`：先收动作条 → 再收树 → 再取消输入框焦点 → 最后收起（无答案时直接收起） |
+| 收起 | `Esc`：先收树 → 再取消输入框焦点 → 最后收起 |
 
-## 环境要求
+**几个顺手的设计**：
 
-- macOS 14+
-- Xcode 16+ / Swift 6（本机验证：Xcode 26.4，Swift 6.3）
-- 唯一三方依赖：[KeyboardShortcuts](https://github.com/sindresorhus/KeyboardShortcuts)
-- 模型二选一（也可以都配）：
-  - **Google Gemini**：去 [AI Studio](https://aistudio.google.com/apikey) 领一个 API Key，免费层即可跑 `gemini-2.5-flash`
-  - **[Ollama](https://ollama.com) 本地**：`ollama pull qwen3:4b-instruct`，完全离线
+- 答案里的术语会自动加下划线，点一下就能展开——这是主路径
+- 面板展开知识树时会占满 944pt，收起时回到 680pt
+- 流式输出时切换到别的卡，那张卡会在后台继续生成，切回去能看到完整内容
+- 面板高度流式期间只增不减，不会因为换行忽高忽低
 
-## 快速开始
+## 模型接入详解
 
-```bash
-# 1. 编译（这台机器必须带 --disable-sandbox，见「已知限制」）
-cd ~/code/Sprig
-swift build --disable-sandbox
+### 本地（Ollama）
 
-# 2. 跑测试
-swift test --disable-sandbox
+只填地址和模型名。地址默认 `http://127.0.0.1:11434`，点「同步模型」会自动列出本机已 pull 的模型。
 
-# 3. 打包成 .app 并启动
-./scripts/make-app.sh
-open -a "$PWD/build/Sprig.app"
-```
+> **注意**：pull 很多模型不会同时吃内存。模型只在被调用时加载，闲置 10 分钟后自动卸载。真正占磁盘的是权重文件（一个 9B 模型约 10 GB）。
 
-启动后是菜单栏应用（无 Dock 图标），按 `⌥Space` 唤起面板。
+### 免费（三个通道）
 
-首次使用按这条路走：
-
-```bash
-# A. 用免费 Gemini（新装默认就是它）
-#    菜单栏图标 → 设置… → 模型接入 → 选「Gemini（免费）」→ 粘贴 API Key → 测一下「测试连接」
-
-# B. 用本地 Ollama
-ollama pull qwen3:4b-instruct       # 设置页点「拉取」可以直接挑模型
-```
-
-面板右下角的模型胶囊随时切换，不用回设置页。
-
-## 模型接入
-
-分三类，设置页和面板菜单都按这个顺序组织：
-
-### 本地
-
-默认 Ollama，只需要填地址和模型名。模型名可以手填，也可以点「拉取」列出本机已 pull 的。
-本机推理不花钱，适合不想联网的场景。
-
-### 免费
-
-Gemini 和 OpenRouter 两条。Key 在设置页填，模型清单点「同步模型」从接口拉：
-
-| 平台 | 免费额度 | 拉到的模型 |
+| 通道 | 领 Key 的地方 | 模型 |
 |---|---|---|
-| Gemini | 约 10–15 次/分钟 | 只列 `flash` 系（pro 要付费） |
-| OpenRouter | 约 20 次/分钟、50 次/天 | 定价为 0 且能对话的，当前 12 个 |
+| 智谱 GLM | [bigmodel.cn/usercenter/proj-mgmt/apikeys](https://bigmodel.cn/usercenter/proj-mgmt/apikeys) | `glm-4.7-flash`（唯一免费的，其余型号要充值） |
+| OpenRouter | [openrouter.ai/keys](https://openrouter.ai/keys) | 定价为 0 且能对话的，当前 9 个 |
+| Gemini | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | 只列 `flash` 系，需要代理 |
 
-**拉到的模型全部展开到面板菜单里**，不用回设置页切换。列表每天自动刷新一次，
-当前用的模型下架了会自动换一个。
+**智谱要实名认证**——没实名的账号生成的 Key 用不了。这一步最容易漏。
 
-### 自定义
+**同步模型**：点按钮会拉取该通道的可用模型，**只保留探测通过的**（404 / 403 / 400 的直接剔除，429 保留——那是暂时的）。探测只对 OpenRouter 做：智谱和 Gemini 逐个探会把免费额度打光。
 
-填名称、Base URL、Key、模型名，可以加任意多条。适用于 OpenAI、DeepSeek、Groq、智谱、
-火山方舟、阿里百炼、LM Studio、vLLM 等一切 OpenAI 兼容服务：
+### 自定义（任何 OpenAI 兼容服务）
+
+填名称、Base URL、Key、模型名，可以加任意多条：
 
 | 平台 | Base URL | 模型示例 |
 |---|---|---|
+| **DeepSeek** | `https://api.deepseek.com` | `deepseek-chat`（快）/ `deepseek-reasoner`（推理）|
 | OpenAI | `https://api.openai.com/v1` | `gpt-4o-mini` |
-| DeepSeek | `https://api.deepseek.com` | `deepseek-chat` |
-| Groq | `https://api.groq.com/openai/v1` | `openai/gpt-oss-120b` |
-| 智谱 | `https://open.bigmodel.cn/api/paas/v4` | `glm-4.7-flash` |
-| 火山方舟 | `https://ark.cn-beijing.volces.com/api/v3` | 控制台里的接入点 ID |
+| 火山方舟（豆包） | `https://ark.cn-beijing.volces.com/api/v3` | 控制台的接入点 ID |
 | 阿里百炼 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-flash` |
+| Groq | `https://api.groq.com/openai/v1` | `openai/gpt-oss-120b` |
+| LM Studio | `http://127.0.0.1:1234/v1` | 加载的模型名 |
 
 Base URL 填到 `/v1` 或只填域名都能识别，`https://x/v1` 不会被拼成 `/v1/v1`。
 
-> 免费额度变动频繁，具体以各家控制台为准；上面这几个只在写这份文档时核对过。
+### 代理
 
-### 免费模型自动导入
+**设置页「联网搜索」下面有一行「代理」**，填 `http://127.0.0.1:7890` 之类，所有出站请求都走它。留空则跟随系统设置。
 
-首次启动会自动从 OpenRouter 拉一次当前免费模型清单（`/api/v1/models` 是公开接口，**不需要 API Key**），
-生成一条「OpenRouter 免费」接入，之后每天维护。清单里哪些模型真的能聊天、哪些是音乐生成或审核模型，
-只能靠本地规则判断，所以选择策略写死了一张偏好表。
+什么时候需要：用 Gemini、OpenAI、OpenRouter 这些境外服务时。国内服务（DeepSeek、智谱）不需要。
 
-**怎么选模型**：先剔掉不能当对话模型用的——音乐生成（`lyria`）、内容审核（`content-safety`）、
-代码专用（`north-mini-code` / `laguna`）、2.6B 以下的（`lfm`）、以及行为不可预测的 `openrouter/free` 路由器。
-剩下的按偏好权重挑：
+## 联网搜索
 
-```
-qwen3 > gemma-4-31b > nemotron-3-super > 星辰 > minimax > inkling-small > lightning > …
-```
+知识问答常需要最新信息，所以接了工具调用——**模型自己决定要不要搜、搜什么**，不是每次提问都塞一堆结果进去。
 
-权重看的是**中文表达和指令遵循**——Sprig 的 prompt 要求模型输出 `⟦术语⟧` 标记，太小的模型经常不守格式。
-不按上下文长度选，因为免费层里 1M 窗口的往往是大参数模型（如 inkling 975B），慢且容易撞限额。
-一个规则都不匹配时才按上下文长度兜底。
-
-这套规则有单元测试兜着（`Tests/SprigCoreTests/FreeModelCatalogTests.swift`），清单每周变也能保证不会选到奇怪的东西。
-
-**领 Key**：清单不需要 Key，但推理需要。设置页 API Key 那行右侧有「去获取」，点了直接打开对应页面：
-
-| 接入 | 跳转 |
-|---|---|
-| OpenRouter 免费 | [openrouter.ai/keys](https://openrouter.ai/keys)（免费层约 20 次/分钟、50 次/天，充值满 $10 后 1,000 次/天） |
-| Gemini | [aistudio.google.com/apikey](https://aistudio.google.com/apikey)（免费层约 10–15 次/分钟） |
-| Ollama / 未知网关 | 不显示按钮 |
-
-之后 app 每小时检查一次，距上次同步超过 24 小时就重新拉：
-
-- 当前选的模型还在免费清单里 → **不动你的选择**
-- 已经下架 → 自动切到清单里的下一个可用模型
-- 接入已经被删掉 → 不会重新加回来（标了 `isBuiltin`，正常路径删不掉）
-
-### 「拉取」和「同步免费」不是一回事
-
-设置页有两个按钮，容易混：
-
-| 按钮 | 拉什么 | 数量 |
-|---|---|---|
-| **拉取** | 该接入的**全部**模型（OpenRouter 全量清单） | 464 个，其中 19 个定价为 0 |
-| **同步免费** | 只有免费模型，用于自动创建/维护「OpenRouter 免费」那条接入 | 19 个 |
-
-「拉取」的菜单现在分两组：**免费（不计费）** 排在上面并标注，**付费** 在下面。之前一律按字母序取
-前 40 个，结果全是 `aion-labs` / `anthropic` 开头的付费模型，免费的根本排不进来。
-
-两组都会过滤掉定价为 0 但根本不能聊天的：音乐生成（`lyria`）、内容审核（`content-safety`）、
-代码专用（`north-mini-code` / `laguna`）、2.6B 以下的 `lfm`。所以免费组实际是 12 个而不是 19 个。
-
-设置页「同步免费」按钮可以随时手动刷新，右侧会显示当前可用数量。
-
-### 联网搜索
-
-知识问答常需要最新信息，所以接了工具调用（tool use）——**模型自己决定要不要搜、搜什么**，
-不是每次提问都塞一堆搜索结果进去。
-
-配置：设置页 →「联网搜索」→ 打开开关 → 选后端 → 填对应 Key。
+配置：设置页 →「联网搜索」→ 打开开关 → 选后端 → 填 Key。
 
 | 后端 | 额度 | 特点 |
 |---|---|---|
-| **Tavily** | 1000 次/月免费，超出约 $0.008/次 | 有免费额度，轻量够用 |
-| **DeepSeek** | 5 元/1000 次成功请求（空结果不计费） | 单价低约 11 倍，中文更强；返回带 `rerank_score` / `authority` 质量分 |
+| **Tavily** | 1000 次/月免费 | 国际搜索，质量好，需要代理 |
+| **DeepSeek** | 5 元/1000 次成功请求 | 国内直连，中文结果更强 |
 
-两个后端各存一份 Key，切来切去不会互相覆盖。DeepSeek 的 Key 就是模型 API 那个，不用另外申请。
-
-问答过程中想临时搜一下就点输入框右侧的地球仪——开着时图标变蓝。没填 Key 时点它会直接跳到设置页，
-而不是毫无反应。
-
-实现方式是自己走 tool use，不是 OpenRouter 的 `:online` 插件（那个每次 $0.007）：
+**搜索结果显示成一行**：
 
 ```
-提问 → 模型返回 tool_calls(web_search, {query})
-     → app 调搜索后端拿结果
-     → 作为 role:tool 消息回填
-     → 模型整合成答案
+🔍 搜索「今日金价」，参考了 3 条来源      ← 点这行弹出来源菜单
 ```
 
-最多 3 轮，防止模型反复搜同一个词。搜索动作会写进答案（`🔍 搜索「…」`），你能看到答案基于什么。
+点开能看到「标题 · 域名」，hover 显示摘要，点击打开原文。设计成折叠的是因为把来源链接铺在正文里会打断阅读。
 
-**结果拼装**：两个后端统一成「标题 / 来源 / 摘要」，摘要截到 600 字——5 条约 3000 字，
-再多会把卡片上下文挤掉——`ContextAssembler` 会按 `toolReserve` 先扣掉这部分空间。DeepSeek 优先用它的 `summary`
-字段（600–800 字，本来就是给模型读的），并按 `rerank_score ≥ 1.5` 过滤低质结果。
+**什么时候会搜**：只有涉及时事、当前价格、最新版本号、或者模型确实不知道的冷门事实时才搜。问"什么是设计模式"这类稳定知识，模型直接凭知识回答——搜了反而会拿到一堆营销文。
 
-**只对「OpenAI 兼容」接入生效**。Ollama 和 Gemini 走的是协议里的默认实现，传了 tools 也只会当普通对话处理。
-切换接入时会自动降级，不会报错。
+## 常见问题
 
-搜索结果会在答案里列出来源：**标题 + 域名，标题可点开原文**（前 3 条）。这样你能直接核对
-模型说的是不是原文的意思，而不用信它转述。
+### 菜单栏图标不见了
 
-**成本**：搜索走所选后端的额度，模型 token 走你选的那条接入。一次提问最多 4 次模型调用
-（初始 + 3 轮搜索），注意免费层的每分钟限额。
+这是 macOS 26 的一个已知问题。系统给第三方菜单栏项加了独立授权，关掉后 app 端**没有任何 API 能恢复**。
 
-## 配置
+排查顺序：
+
+1. **系统设置 → 菜单栏 → 拉到底「允许在菜单栏中显示」**，确认 Sprig 是开着的
+2. 确认只跑了一个实例：`pgrep -f "Sprig.app/Contents/MacOS/Sprig"` 应该只有一行
+3. 菜单栏图标太多时会被挤到屏幕外，关掉几个不用的
+4. 以上都不行 → 换 bundle id（等于让系统重新分配授权），但配置需要重新迁移
+
+`killall SystemUIServer`、重启电脑都**不会**重置这个授权。
+
+### 一直 429
+
+免费额度用完了。等一分钟，或者换成付费接入。app 会自动重试一次并尝试换个模型，但额度是真没了。
+
+### TLS 握手失败
+
+两个可能：**目标域名被网络拦截**（最常见），或者证书真的有问题。
+
+- 用 Gemini / OpenAI / OpenRouter 时，先在设置里配好代理
+- Tavily 在国内直连不通，必须走代理；或者换成 DeepSeek 搜索后端
+
+「证书有问题」这个提示容易误导——在国内环境，九成是网络拦截。
+
+### 面板高度忽高忽低
+
+已经修了。如果还遇到，说明是窗口 resize 的时序问题，可以在设置里把知识树收起来再展开一次。
+
+### 答案文字被右侧裁掉
+
+也修了（文本容器宽度少算 inset 导致）。如果还遇到，告诉我你的字号设置。
+
+## 配置项
 
 | 项 | 位置 | 默认值 |
 |---|---|---|
-| 模型接入 | 菜单栏「设置…」→ 模型接入；或在面板点模型胶囊 | 新装：Gemini 免费 / 老用户：Ollama |
-| 唤起快捷键 | 菜单栏「设置…」→ 唤起面板快捷键（可录制） | `⌥Space` |
-| 知识树快捷键 | 菜单栏「设置…」→ 知识树快捷键（可录制） | `⌘⇧T` |
-| 知识库位置 | 菜单栏「设置…」→ 知识库 → 选择… | `~/Documents/Sprig`（文件为 `cards-v2.json`） |
+| 模型接入 | 菜单栏「设置…」→ 模型接入 | 首次启动：智谱 / Gemini 免费 |
+| 唤起快捷键 | 菜单栏「设置…」→ 唤起面板快捷键 | `⌥Space` |
+| 知识树快捷键 | 菜单栏「设置…」→ 知识树快捷键 | `⌘⇧T` |
+| 知识库位置 | 菜单栏「设置…」→ 知识库 → 选择… | `~/Documents/Sprig` |
+| 代理 | 菜单栏「设置…」→ 联网搜索 → 代理 | 空（跟随系统） |
 
-接入配置存在 UserDefaults 的 `providerConfigs`（JSON 数组），API Key 也在里面——**明文保存在本机偏好设置**，没有走 Keychain。这是为了避开未签名应用反复索要钥匙串权限的问题，别把这份配置同步到任何云端。
+**API Key 存在本机偏好设置里**（`~/Library/Preferences/com.catking.sprig.app.plist`），**明文**。没有走 Keychain，因为未签名应用反复索要钥匙串权限很烦。别把这份配置同步到云端。
 
-环境变量 `SPRIG_MODEL` 可临时覆盖模型名，便于命令行调试。
+想备份或迁移配置：
 
-## 命令行调试参数
+```bash
+defaults export com.catking.sprig.app ~/sprig-backup.plist
+defaults import com.catking.sprig.app ~/sprig-backup.plist
+```
+
+## 给开发者
+
+技术细节都在 [ARCHITECTURE.md](ARCHITECTURE.md)：分层、数据流、上下文装配、窗口焦点、并发模型、踩过的坑。
+
+### 从源码构建
+
+```bash
+git clone https://github.com/thatwzzh/sprig.git
+cd sprig
+./scripts/make-app.sh          # 打包成 build/Sprig.app
+open build/Sprig.app
+```
+
+**注意**：某些环境下 `swift build` 需要加 `--disable-sandbox`（SwiftPM 调 `sandbox-exec` 被系统拒绝）。`make-app.sh` 里已经处理了。
+
+跑测试：
+
+```bash
+swift test --disable-sandbox
+```
+
+改完代码重新部署（会先优雅退出旧实例、再打包、再启动、最后校验只有一个实例）：
+
+```bash
+./scripts/restart-app.sh
+```
+
+### 命令行调试参数
 
 ```bash
 Sprig --show                              # 启动即显示面板
-Sprig --ask "什么是事件溯源？"             # 启动即提问（可叠加 --tree）
+Sprig --ask "什么是事件溯源？"             # 启动即提问
 Sprig --tree                              # 启动并展开知识树
 Sprig --settings                          # 启动即打开设置
-Sprig --settings --dump                   # 打印表单状态后退出（无界面校验）
-Sprig --selftest                          # 无界面校验布局/选区/复制，打印数值后退出
-Sprig --tree-dump [--tree-filter 关键词]   # 打印树的行数、宽度、命中标记
-Sprig --headless "问题"                    # 只跑 provider + 解析器，逐段打印
-Sprig --headless-child                    # 跑子卡（上下文解释）prompt
+Sprig --settings --dump                   # 打印表单状态后退出
+Sprig --selftest                          # 无界面校验布局/选区/复制
+Sprig --tree-dump [--tree-filter 关键词]   # 打印树的行数、宽度、命中
+Sprig --headless "问题"                    # 只跑 provider + 解析器
+Sprig --probe-free                        # 同步免费模型并打印探活结果
 ```
 
-`--selftest` / `--tree-dump` / `--settings --dump` 是为「拿不到屏幕录制权限」的环境准备的：用数值验证布局，而不是截图。
+`--selftest` / `--tree-dump` / `--settings --dump` 是为**拿不到屏幕录制权限**的环境准备的：用数值验证布局，而不是截图。
 
-## 项目结构
+### 项目结构
 
 ```
 Sprig/
 ├── Package.swift                  # SPM 清单
 ├── Sources/
 │   ├── SprigCore/                 # 无 UI 依赖，可单测
-│   │   ├── AnswerCard.swift       # 卡片模型（id/parentID/title/question/answer/selectedText）
-│   │   ├── CardStore.swift        # actor，JSON 持久化 + 树操作（children/path/rename/delete）
-│   │   ├── ContextAssembler.swift # 上下文预算装配（按模型窗口动态算 + 工具预留）
+│   │   ├── AnswerCard.swift       # 卡片模型（含 searchLog 搜索记录）
+│   │   ├── CardStore.swift        # actor，JSON 持久化 + 树操作
+│   │   ├── ContextAssembler.swift # 上下文预算装配
 │   │   ├── TermParser.swift       # ⟦术语⟧ 流式状态机
-│   │   ├── Prompt.swift           # 系统提示词与子卡消息模板
-│   │   ├── LLMProvider.swift      # provider 协议（id / displayName / isLocal / stream）
-│   │   ├── ProviderConfig.swift   # 一条接入的配置模型 + 内置预设
-│   │   ├── FreeModelCatalog.swift # 拉 OpenRouter 免费模型清单（公开接口，无需 Key）
+│   │   ├── Prompt.swift           # 系统提示词
+│   │   ├── LLMProvider.swift      # provider 协议 + 错误翻译
+│   │   ├── ProviderConfig.swift   # 接入配置模型 + 内置预设
+│   │   ├── FreeModelCatalog.swift # OpenRouter 免费清单 + 偏好排序
+│   │   ├── HTTPClient.swift       # 共享 URLSession（支持自定义代理）
 │   │   ├── Tool.swift             # ToolCall / ToolDefinition / ChatEvent
-│   │   ├── WebSearchTool.swift    # web_search 工具（Tavily）
+│   │   ├── TimeTool.swift         # get_current_time 工具
+│   │   ├── WebSearchTool.swift    # web_search 工具（Tavily / DeepSeek）
 │   │   ├── OllamaProvider.swift   # NDJSON 流式
-│   │   ├── OpenAICompatibleProvider.swift  # SSE 流式，覆盖所有 /v1/chat/completions
-│   │   └── GeminiProvider.swift   # Gemini 原生 SSE（systemInstruction / x-goog-api-key）
-│   └── Sprig/                     # AppKit UI
-│       ├── main.swift / AppDelegate.swift
-│       ├── QuickPanel.swift       # 无边框、非激活、可输入的 NSPanel
+│   │   ├── OpenAICompatibleProvider.swift  # SSE，覆盖所有 /v1/chat/completions
+│   │   └── GeminiProvider.swift   # Gemini 原生 SSE + function calling
+│   └── Sprig/                     # AppKit 层
+│       ├── PanelController.swift  # 面板状态机、流式渲染、后台任务
 │       ├── PanelContentView.swift # 手写 frame 布局
-│       ├── PanelController.swift  # 状态机：卡片栈 / 流式 / 导航 / 增删改 / 模型切换
-│       ├── ModelPickerButton.swift # 输入框右侧的模型胶囊
-│       ├── KnowledgeTreeView.swift
-│       ├── BreadcrumbBar.swift / QuestionHeaderView.swift
-│       ├── SelectionActionBar.swift / ConfirmDialog.swift / PointerCursor.swift
-│       ├── AnswerTextView.swift / InputTextView.swift
-│       └── Theme.swift / Settings.swift / Hotkey.swift / SettingsWindowController.swift
-├── Tests/SprigCoreTests/          # 17 项单元测试
-├── scripts/make-app.sh            # 打包成 build/Sprig.app
-├── scripts/restart-app.sh         # 退出旧实例 → 重新打包 → 启动，改完代码跑这个
-└── ARCHITECTURE.md                # 技术架构文档
+│       ├── AnswerTextView.swift   # 答案渲染 + 术语/链接
+│       └── ...
+├── Tests/SprigCoreTests/          # 65 个单测，覆盖解析/预算/选型
+└── scripts/
+    ├── make-app.sh                # 打包 .app
+    └── restart-app.sh             # 退出 → 打包 → 启动 → 校验实例数
 ```
-
-## 菜单栏图标不见了
-
-macOS 26 (Tahoe) 把第三方菜单栏项收归 ControlCenter 管理，并加了一道授权。按顺序查：
-
-1. **系统设置 → 菜单栏 → 最下面的「允许在菜单栏中显示」**，确认本 app 的开关是开的。
-   这是 macOS 26 新加的，按 bundle id 记录。一旦关掉（手滑拖出菜单栏、或系统迁移时默认关闭），
-   `NSStatusItem` 就彻底失效——要么 `isVisible = true` 被系统立刻重置回 false，
-   要么图标窗口被 ControlCenter 摆到屏幕外（y 为负）。**app 端没有任何 API 能自行恢复。**
-2. 确认只有一个实例在跑：`pgrep -f "Contents/MacOS/Sprig" | wc -l`。
-   多于 1 就跑 `./scripts/restart-app.sh`，它会把所有实例清干净并校验。
-3. 确认没被刘海挡住：菜单栏太挤时图标会被塞到刘海下面，没有任何提示。
-   收紧间距可以腾出空间（社区方案，本机未验证效果）：
-   `defaults -currentHost write -globalDomain NSStatusItemSpacing -int 6`，然后重新登录。
-4. 如果系统设置里根本找不到本 app 的条目，或者打开了仍然不显示——**换一个 bundle id** 是最直接的办法。
-   本项目就靠这招解决过一次：`com.catking.sprig` → `com.catking.sprig.app`。
-   新 id 在系统里是全新条目，默认允许；`Settings.migrateLegacyDefaultsIfNeeded` 会把旧域的
-   快捷键、接入配置、知识库目录整体搬过来，用户无感（迁移后 `defaults read com.catking.sprig.app`
-   能看到 `migratedFromBundle` 记录来源）。
-
-**`killall SystemUIServer`、`killall ControlCenter`、重启电脑都不会重置这道授权**——授权是持久化的，
-只在系统设置里能改。图标消失先查第 1 条，不要怀疑代码。
-
-## 默认关闭思考链
-
-推理模型（qwen3、gemini-2.5-flash 等）会先吐一大段思考过程再给答案。知识问答用不上，还拖慢首字延迟，
-所以默认关掉。设置页「联网搜索」那行右侧有开关。
-
-各家写法不同，所以只对认得出的后端发：
-
-| 后端 | 参数 |
-|---|---|
-| OpenRouter | `reasoning: { effort: "none" }` |
-| Gemini flash 系 | `thinkingConfig: { thinkingBudget: 0 }` |
-| Ollama | `think: false`（一直是关的） |
-| 其他 OpenAI 兼容网关 | **不发**——各家写法不同，乱发可能直接 400 |
-
-Gemini 的 pro 系最少要 128 预算，传 0 会报错，所以只对 `flash` 生效。
-
-## 出错了会看到什么
-
-| 情况 | 面板提示 |
-|---|---|
-| 断网 / 超时 / 域名解析失败 | 具体到原因的中文，例如「设备没有联网，检查 Wi-Fi 或网线」 |
-| 401 / 403 | 鉴权失败：API Key 无效或没这个模型的权限 |
-| 404 | 接口地址不对：检查 Base URL 是否该以 `/v1` 结尾 |
-| 429 | 被限流：免费层有每分钟限制，等一分钟再问 |
-| 5xx | 对方服务器出错，不是本机问题 |
-| 请求成功但没内容 | 「模型没有返回任何内容」，附三个常见原因 |
-
-以前这些统一显示成 HTTP 原文，用户看不出该改什么。
 
 ## 已知限制
 
-- **`swift build` 必须加 `--disable-sandbox`**：这台机器上 SwiftPM 自身调用 `sandbox-exec` 会被系统拒绝（`sandbox_apply: Operation not permitted`），加参数即可。
-- **本地模型默认关掉思维链**：请求体带 `"think": false`，并限制 `num_ctx: 8192`。qwen3 系默认会先吐大段 `thinking`，且默认 262144 上下文会把 9B 模型撑到 20GB、约 30s/token。
-- **API Key 明文存在 UserDefaults**：没走 Keychain，未签名应用重签后 Keychain 会反复索权。介意就自己改 `Settings.providerConfigs` 的存取。
-- **免费额度随时会变**：Gemini 免费层的模型清单和速率限制在 2026 年调整过多次，429 时先降低频率；Gemini 3.x 系列目前不在免费名单里，默认值锁在 `gemini-2.5-flash`。
-- **跨桌面语义**：面板绑定在唤出它的桌面，切桌面不跟随；在别的桌面按热键会把面板迁过来（轮询 `isOnActiveSpace` 确认迁移完成后再锁定）。
-- **不做全局划词**：选词只发生在面板自己的答案区。这是有意为之——省掉辅助功能权限、AX 取词、OCR 三件套。
-- **联网搜索只支持「OpenAI 兼容」接入**：tool use 实现在 `OpenAICompatibleProvider` 里；Ollama 和 Gemini 走协议默认实现，会静默降级为普通对话。
-- **菜单栏图标受 macOS 26 授权控制**：详见上面「菜单栏图标不见了」，这不是 app 能自己修的。
+- **未签名**：首次打开要手动允许，每次重新构建后系统可能再问一次
+- **免费模型限流**：见上文，这是外部限制，app 只能重试和降级
+- **API Key 明文存储**：见上文，权衡后的选择
+- **单窗口**：同时只能开一个面板，但多张卡可以在后台并发（最多 8 条连接）
+- **上下文窗口**：按模型窗口动态分配预算，超长对话会丢弃最早的节点
 
 ## 后续计划
 
-- 兄弟卡差异对比视图
-- 接入配置导入 / 导出（目前只在本机 UserDefaults）
-- 卡片全文检索（FTS5 / embedding）
-- 图标与公证分发
+- [ ] 代码签名 + 公证，去掉首次打开的确认步骤
+- [ ] 卡片导出为 Markdown / 分享图
+- [ ] 全局快捷键支持更多组合
+- [ ] 知识树的多选与批量整理
+
+---
+
+**License**: MIT · **反馈**: [Issues](https://github.com/thatwzzh/sprig/issues)
