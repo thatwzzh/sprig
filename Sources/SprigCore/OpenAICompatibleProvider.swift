@@ -277,14 +277,19 @@ public struct OpenAICompatibleProvider: LLMProvider {
     }
 }
 
-/// 一条可选的模型。`isFree` 只有 OpenRouter 这类带 pricing 字段的网关能判断出来。
+/// 一条可选的模型。
 public struct ModelOption: Sendable, Equatable {
     public let id: String
+    /// 只有 OpenRouter 这类带 pricing 字段的网关能判断出来
     public let isFree: Bool
+    /// 越高越像「通用对话模型」。按官方描述的措辞估的，不是精确指标，
+    /// 但足以把「为 coding agent 训练的」「视觉专用」这类排到后面。
+    public let chatFitness: Int
 
-    public init(id: String, isFree: Bool) {
+    public init(id: String, isFree: Bool, chatFitness: Int = 50) {
         self.id = id
         self.isFree = isFree
+        self.chatFitness = chatFitness
     }
 }
 
@@ -313,12 +318,50 @@ public extension OpenAICompatibleProvider {
                 guard let id = item["id"] as? String else { return nil }
                 let pricing = item["pricing"] as? [String: Any]
                 let free = isZero(pricing?["prompt"]) && isZero(pricing?["completion"])
-                return ModelOption(id: id, isFree: free)
+                let description = (item["description"] as? String ?? "").lowercased()
+                let architecture = item["architecture"] as? [String: Any]
+                let modalities = architecture?["input_modalities"] as? [String] ?? []
+                return ModelOption(id: id,
+                                   isFree: free,
+                                   chatFitness: chatFitness(id: id,
+                                                            description: description,
+                                                            modalities: modalities))
             }
             .sorted { $0.id < $1.id }
         } catch {
             return []
         }
+    }
+
+    /// 估一个「适不适合日常问答」的分。
+    ///
+    /// 依据只有官方描述和输入模态，没有跑基准，所以只能做粗排：
+    /// 把明确为编码/感知/多模态专用训练的排后面就够了，不必追求精确。
+    static func chatFitness(id: String, description: String, modalities: [String]) -> Int {
+        var score = 50
+        let haystack = description + " " + id.lowercased()
+
+        // 这些词出现在描述里，说明模型的训练目标不是通用对话
+        let offTopic = ["coding agent", "coding", "code generation", "agentic workload",
+                        "gui", "screenshot", "perception", "sub-agent", "tts",
+                        "text-to-speech", "image generation", "video", "audio", "embedding",
+                        "rerank", "safety", "guard", "moderation", "ocr", "transcription"]
+        for word in offTopic where haystack.contains(word) { score -= 10 }
+
+        // 通用对话 / 指令跟随
+        let onTopic = ["instruct", "instruction-tuned", "chat", "conversation",
+                       "general-purpose", "assistant", "reasoning", "language model"]
+        for word in onTopic where haystack.contains(word) { score += 9 }
+
+        // 纯文本输入的更可能是通用语言模型；带 image/video 的多半是专用多模态
+        let extras = Set(modalities).subtracting(["text"])
+        if extras.isEmpty {
+            score += 8
+        } else {
+            score -= 5 * extras.count
+        }
+
+        return max(10, min(100, score))
     }
 
     /// pricing 里的价格是字符串（"0" / "0.000001"），也见过数字类型

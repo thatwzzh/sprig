@@ -77,14 +77,14 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
 
         addSectionTitle("模型接入", y: 654, to: contentView)
 
-        // ── 本地 ──
+        // ── 本地：地址和模型名一行 ──
         addGroupTitle("本地 · Ollama 跑在本机，模型名手填", y: 628, to: contentView)
-        configure(localURLField, placeholder: ProviderConfig.Kind.ollama.defaultBaseURL)
-        localURLField.frame = NSRect(x: 120, y: 596, width: 356, height: 24)
+        configure(localURLField, placeholder: "Ollama 地址")
+        localURLField.frame = NSRect(x: 24, y: 598, width: 196, height: 24)
         contentView.addSubview(localURLField)
 
-        configure(localModelField, placeholder: ProviderConfig.Kind.ollama.defaultModel)
-        localModelField.frame = NSRect(x: 120, y: 568, width: 280, height: 24)
+        configure(localModelField, placeholder: "模型名")
+        localModelField.frame = NSRect(x: 226, y: 598, width: 168, height: 24)
         contentView.addSubview(localModelField)
 
         fetchButton.target = self
@@ -92,50 +92,50 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         fetchButton.bezelStyle = .rounded
         fetchButton.controlSize = .small
         fetchButton.font = .systemFont(ofSize: 12)
-        fetchButton.frame = NSRect(x: 408, y: 567, width: 68, height: 26)
+        fetchButton.frame = NSRect(x: 400, y: 597, width: 76, height: 26)
         fetchButton.toolTip = "列出本机 Ollama 已 pull 的模型"
         contentView.addSubview(fetchButton)
 
         // ── 免费：两条并列，各自一个 Key ──
-        addGroupTitle("免费 · 模型清单从接口拉，面板里可逐个切换", y: 542, to: contentView)
+        addGroupTitle("免费 · 模型清单从接口拉，面板里可逐个切换", y: 570, to: contentView)
 
         let geminiLabel = NSTextField(labelWithString: "Gemini")
         geminiLabel.font = .systemFont(ofSize: 12)
         geminiLabel.textColor = .secondaryLabelColor
-        geminiLabel.frame = NSRect(x: 24, y: 516, width: 72, height: 18)
+        geminiLabel.frame = NSRect(x: 24, y: 544, width: 72, height: 18)
         contentView.addSubview(geminiLabel)
 
         geminiKeyField.placeholderString = "Gemini API Key"
         geminiKeyField.font = .systemFont(ofSize: 12)
         geminiKeyField.delegate = self
-        geminiKeyField.frame = NSRect(x: 100, y: 512, width: 300, height: 24)
+        geminiKeyField.frame = NSRect(x: 100, y: 540, width: 300, height: 24)
         contentView.addSubview(geminiKeyField)
 
         let geminiHelp = PointerButton(title: "去获取", target: self, action: #selector(openGeminiKeyPage))
         geminiHelp.bezelStyle = .rounded
         geminiHelp.controlSize = .small
         geminiHelp.font = .systemFont(ofSize: 12)
-        geminiHelp.frame = NSRect(x: 406, y: 511, width: 70, height: 26)
+        geminiHelp.frame = NSRect(x: 406, y: 539, width: 70, height: 26)
         geminiHelp.toolTip = "在 aistudio.google.com/apikey 领一个免费 Key"
         contentView.addSubview(geminiHelp)
 
         let orLabel = NSTextField(labelWithString: "OpenRouter")
         orLabel.font = .systemFont(ofSize: 12)
         orLabel.textColor = .secondaryLabelColor
-        orLabel.frame = NSRect(x: 24, y: 488, width: 72, height: 18)
+        orLabel.frame = NSRect(x: 24, y: 516, width: 72, height: 18)
         contentView.addSubview(orLabel)
 
         openRouterKeyField.placeholderString = "OpenRouter API Key（sk-or-v1-…）"
         openRouterKeyField.font = .systemFont(ofSize: 12)
         openRouterKeyField.delegate = self
-        openRouterKeyField.frame = NSRect(x: 100, y: 484, width: 300, height: 24)
+        openRouterKeyField.frame = NSRect(x: 100, y: 512, width: 300, height: 24)
         contentView.addSubview(openRouterKeyField)
 
         let orHelp = PointerButton(title: "去获取", target: self, action: #selector(openOpenRouterKeyPage))
         orHelp.bezelStyle = .rounded
         orHelp.controlSize = .small
         orHelp.font = .systemFont(ofSize: 12)
-        orHelp.frame = NSRect(x: 406, y: 483, width: 70, height: 26)
+        orHelp.frame = NSRect(x: 406, y: 511, width: 70, height: 26)
         orHelp.toolTip = "在 openrouter.ai/keys 领 Key"
         contentView.addSubview(orHelp)
 
@@ -144,19 +144,19 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         syncFreeButton.bezelStyle = .rounded
         syncFreeButton.controlSize = .small
         syncFreeButton.font = .systemFont(ofSize: 12)
-        syncFreeButton.frame = NSRect(x: 120, y: 454, width: 104, height: 26)
+        syncFreeButton.frame = NSRect(x: 120, y: 484, width: 104, height: 26)
         syncFreeButton.toolTip = "从接口拉取当前可用的免费模型（每天自动刷新）"
         contentView.addSubview(syncFreeButton)
 
         freeModelsLabel.font = .systemFont(ofSize: 11)
         freeModelsLabel.textColor = .secondaryLabelColor
         freeModelsLabel.lineBreakMode = .byTruncatingTail
-        freeModelsLabel.frame = NSRect(x: 232, y: 459, width: 244, height: 16)
+        freeModelsLabel.frame = NSRect(x: 232, y: 489, width: 244, height: 16)
         contentView.addSubview(freeModelsLabel)
 
         // ── 自定义 ──
-        addGroupTitle("自定义 · 填 Base URL 和 Key，给配置起个名", y: 436, to: contentView)
-        customPopUp.frame = NSRect(x: 120, y: 404, width: 200, height: 26)
+        addGroupTitle("自定义 · 填 Base URL 和 Key，给配置起个名", y: 456, to: contentView)
+        customPopUp.frame = NSRect(x: 120, y: 426, width: 200, height: 26)
         customPopUp.target = self
         customPopUp.action = #selector(customSelectionChanged)
         contentView.addSubview(customPopUp)
@@ -166,7 +166,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         addButton.bezelStyle = .rounded
         addButton.controlSize = .small
         addButton.font = .systemFont(ofSize: 13)
-        addButton.frame = NSRect(x: 326, y: 404, width: 32, height: 26)
+        addButton.frame = NSRect(x: 326, y: 426, width: 32, height: 26)
         addButton.toolTip = "新增一个自定义接入"
         contentView.addSubview(addButton)
 
@@ -175,26 +175,26 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         removeButton.bezelStyle = .rounded
         removeButton.controlSize = .small
         removeButton.font = .systemFont(ofSize: 13)
-        removeButton.frame = NSRect(x: 362, y: 404, width: 32, height: 26)
+        removeButton.frame = NSRect(x: 362, y: 426, width: 32, height: 26)
         removeButton.toolTip = "删除当前自定义接入"
         contentView.addSubview(removeButton)
 
         configure(customNameField, placeholder: "名称，例如「公司网关」")
-        customNameField.frame = NSRect(x: 120, y: 376, width: 120, height: 24)
+        customNameField.frame = NSRect(x: 24, y: 396, width: 76, height: 24)
         contentView.addSubview(customNameField)
 
         configure(customURLField, placeholder: "Base URL，填到 /v1 或只填域名")
-        customURLField.frame = NSRect(x: 248, y: 376, width: 228, height: 24)
+        customURLField.frame = NSRect(x: 106, y: 396, width: 156, height: 24)
         contentView.addSubview(customURLField)
 
         customKeyField.placeholderString = "API Key"
         customKeyField.font = .systemFont(ofSize: 12)
         customKeyField.delegate = self
-        customKeyField.frame = NSRect(x: 120, y: 348, width: 140, height: 24)
+        customKeyField.frame = NSRect(x: 268, y: 396, width: 90, height: 24)
         contentView.addSubview(customKeyField)
 
         configure(customModelField, placeholder: "模型名")
-        customModelField.frame = NSRect(x: 268, y: 348, width: 208, height: 24)
+        customModelField.frame = NSRect(x: 364, y: 396, width: 112, height: 24)
         contentView.addSubview(customModelField)
 
         testButton.target = self
@@ -202,23 +202,23 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         testButton.bezelStyle = .rounded
         testButton.controlSize = .small
         testButton.font = .systemFont(ofSize: 12)
-        testButton.frame = NSRect(x: 120, y: 318, width: 88, height: 26)
+        testButton.frame = NSRect(x: 24, y: 364, width: 88, height: 26)
         contentView.addSubview(testButton)
 
         statusLabel.font = .systemFont(ofSize: 11)
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.lineBreakMode = .byTruncatingTail
-        statusLabel.frame = NSRect(x: 214, y: 323, width: 262, height: 16)
+        statusLabel.frame = NSRect(x: 120, y: 369, width: 262, height: 16)
         contentView.addSubview(statusLabel)
 
-        addSeparator(y: 280, to: contentView)
+        addSeparator(y: 336, to: contentView)
 
         // 知识库
-        addSectionTitle("知识库", y: 256, to: contentView)
+        addSectionTitle("知识库", y: 312, to: contentView)
         pathLabel.font = .systemFont(ofSize: 12)
         pathLabel.textColor = .secondaryLabelColor
         pathLabel.lineBreakMode = .byTruncatingMiddle
-        pathLabel.frame = NSRect(x: 24, y: 230, width: 330, height: 18)
+        pathLabel.frame = NSRect(x: 24, y: 286, width: 330, height: 18)
         pathLabel.toolTip = "卡片存放在这个目录的 \(CardStore.fileName) 里，换目录时会把现有卡片复制过去"
         contentView.addSubview(pathLabel)
 
@@ -226,31 +226,31 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         chooseButton.bezelStyle = .rounded
         chooseButton.controlSize = .small
         chooseButton.font = .systemFont(ofSize: 12)
-        chooseButton.frame = NSRect(x: 396, y: 225, width: 80, height: 26)
+        chooseButton.frame = NSRect(x: 396, y: 281, width: 80, height: 26)
         chooseButton.toolTip = "选择知识库文件夹"
         contentView.addSubview(chooseButton)
 
-        addSeparator(y: 206, to: contentView)
+        addSeparator(y: 262, to: contentView)
 
         // 联网搜索
-        addSectionTitle("联网搜索", y: 182, to: contentView)
+        addSectionTitle("联网搜索", y: 238, to: contentView)
 
         webSearchToggle.target = self
         webSearchToggle.action = #selector(webSearchToggled)
         webSearchToggle.font = .systemFont(ofSize: 12)
-        webSearchToggle.frame = NSRect(x: 22, y: 154, width: 200, height: 20)
+        webSearchToggle.frame = NSRect(x: 22, y: 210, width: 200, height: 20)
         webSearchToggle.state = Settings.webSearchEnabled ? .on : .off
         contentView.addSubview(webSearchToggle)
 
         thinkingToggle.target = self
         thinkingToggle.action = #selector(thinkingToggled)
         thinkingToggle.font = .systemFont(ofSize: 12)
-        thinkingToggle.frame = NSRect(x: 236, y: 154, width: 120, height: 20)
+        thinkingToggle.frame = NSRect(x: 236, y: 210, width: 120, height: 20)
         thinkingToggle.state = Settings.disableThinking ? .on : .off
         thinkingToggle.toolTip = "推理模型会先输出思考过程。知识问答用不上，关掉更快、更省 token。"
         contentView.addSubview(thinkingToggle)
 
-        searchBackendPopUp.frame = NSRect(x: 24, y: 126, width: 110, height: 24)
+        searchBackendPopUp.frame = NSRect(x: 24, y: 182, width: 110, height: 24)
         searchBackendPopUp.controlSize = .small
         searchBackendPopUp.font = .systemFont(ofSize: 12)
         searchBackendPopUp.target = self
@@ -262,7 +262,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         webSearchKeyField.font = .systemFont(ofSize: 12)
         webSearchKeyField.delegate = self
         webSearchKeyField.stringValue = Settings.webSearchAPIKey
-        webSearchKeyField.frame = NSRect(x: 140, y: 126, width: 260, height: 24)
+        webSearchKeyField.frame = NSRect(x: 140, y: 182, width: 260, height: 24)
         contentView.addSubview(webSearchKeyField)
 
         webSearchHelpButton.target = self
@@ -270,7 +270,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         webSearchHelpButton.bezelStyle = .rounded
         webSearchHelpButton.controlSize = .small
         webSearchHelpButton.font = .systemFont(ofSize: 12)
-        webSearchHelpButton.frame = NSRect(x: 406, y: 125, width: 70, height: 26)
+        webSearchHelpButton.frame = NSRect(x: 406, y: 181, width: 70, height: 26)
         webSearchHelpButton.toolTip = searchHelpTooltip()
         contentView.addSubview(webSearchHelpButton)
 
@@ -282,7 +282,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
             + "联网搜索可切 Tavily（1000 次/月免费）或 DeepSeek（5 元/1000 次，中文更强）。")
         hint.font = .systemFont(ofSize: 11)
         hint.textColor = .secondaryLabelColor
-        hint.frame = NSRect(x: 24, y: 12, width: 452, height: 108)
+        hint.frame = NSRect(x: 24, y: 12, width: 452, height: 158)
         contentView.addSubview(hint)
 
         reloadAll()
@@ -387,8 +387,8 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
 
         let geminiCount = geminiConfig?.cachedModels?.count ?? 0
         let orCount = openRouterConfig?.cachedModels?.count ?? 0
-        freeModelsLabel.stringValue = "Gemini \(geminiCount) · OpenRouter \(orCount) · 当前 \(Settings.activeConfig.modelLabel)"
-        freeModelsLabel.toolTip = freeModelsLabel.stringValue
+        freeModelsLabel.stringValue = "Gemini \(geminiCount) · OpenRouter \(orCount)"
+        freeModelsLabel.toolTip = "当前使用：\(Settings.activeConfig.modelLabel)"
     }
 
     private func persistFree() {
@@ -450,6 +450,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         }
         customNameField.stringValue = config.name
         customURLField.stringValue = config.baseURL
+        customURLField.toolTip = config.baseURL
         customKeyField.stringValue = config.apiKey
         customModelField.stringValue = config.model
     }
@@ -550,7 +551,6 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         guard let name = sender.representedObject as? String else { return }
         localModelField.stringValue = name
         persistLocal()
-        statusLabel.stringValue = "已选 \(name)"
     }
 
     /// 打开「去哪里领 Key」的页面

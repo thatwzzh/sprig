@@ -125,17 +125,20 @@ public enum FreeModelCatalog {
     private static let preference: [(token: String, rank: Int)] = [
         ("qwen3", 10),                  // 中文和指令遵循最稳的一档
         ("qwen", 12),
-        // 实测 2026-10-28：gemma 系上游共享池经常 429，nvidia 系稳定，所以后者优先
-        ("nemotron-3.5-super-vl", 20),
-        ("nemotron-3.5-lightning", 24),
-        ("nemotron-3-ultra", 28),
-        ("gemma-4-31b", 34),            // dense 31B，格式守得住，但常被上游限流
-        ("gemma-4", 38),
-        ("nemotron-3-super", 42),
+        // 按「通用问答适配度」排，不再单纯看可用性：
+        // xing4.0 是纯文本 MoE、中文语料好；gemma 指令遵循强（但常被上游限流）；
+        // nemotron 的 VL / lightning 是为视觉和高吞吐 agent 训练的，沉到后面
+        ("xing4.0", 18),
+        ("gemma-4-31b", 24),
+        ("gemma-4", 30),
+        ("nemotron-3-ultra", 36),
+        ("nemotron-3.5-super-vl", 44),
+        ("nemotron-3.5-lightning", 50),
+        ("nemotron-3-super", 56),
         ("xing4", 36),                  // 星辰，中文语料多
         ("minimax", 40),
         ("inkling-small", 44),          // 1M 上下文，追问链长也不怕
-        ("nemotron-3-nano", 56),
+        ("nemotron-3-nano", 62),
         ("dots", 62),
         ("flint", 66),
         ("openrouter/free", 90),        // 路由器，选到什么都说不准
