@@ -136,10 +136,11 @@ public struct ProviderConfig: Codable, Identifiable, Sendable, Equatable {
         }
     }
 
-    /// 免费类要展开的模型清单；非免费类只返回当前模型
+    /// 面板菜单里要列出的模型。
+    /// 本地和免费都展开同步来的全量清单；自定义类只返回当前模型。
     public var selectableModels: [String] {
-        guard resolvedCategory == .free,
-              let cached = cachedModels, !cached.isEmpty else {
+        let expandable = resolvedCategory == .free || resolvedCategory == .local
+        guard expandable, let cached = cachedModels, !cached.isEmpty else {
             return [model].filter { !$0.isEmpty }
         }
         return cached

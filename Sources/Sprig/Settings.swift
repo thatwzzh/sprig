@@ -280,10 +280,11 @@ enum Settings {
 
     /// 超过一天就该重新拉一次
     static var needsFreeModelSync: Bool {
-        // 免费类要么没拉过清单（旧版本只有单模型），要么缺窗口信息，都补一次
-        for config in providerConfigs where config.resolvedCategory == .free {
+        // 本地和免费都要维护清单：没同步过就补一次
+        for config in providerConfigs
+        where config.resolvedCategory == .free || config.resolvedCategory == .local {
             if config.cachedModels?.isEmpty ?? true { return true }
-            if config.contextLength == nil { return true }
+            if config.resolvedCategory == .free, config.contextLength == nil { return true }
         }
         guard let last = freeModelsLastSync else { return true }
         return Date().timeIntervalSince(last) >= 24 * 60 * 60
@@ -299,8 +300,9 @@ enum Settings {
         var updated = false
         var total = 0
 
-        // 免费类可能有多条（Gemini + OpenRouter），逐条拉
-        for index in configs.indices where configs[index].resolvedCategory == .free {
+        // 本地和免费都要维护清单：本地列本机已 pull 的，免费列接口返回的
+        for index in configs.indices
+        where configs[index].resolvedCategory == .free || configs[index].resolvedCategory == .local {
             let models = await fetchFreeModels(for: configs[index])
             guard !models.isEmpty else { continue }
 
@@ -329,6 +331,9 @@ enum Settings {
     @MainActor
     private static func fetchFreeModels(for config: ProviderConfig) async -> [String] {
         switch config.kind {
+        case .ollama:
+            let base = URL(string: config.baseURL) ?? URL(string: ProviderConfig.Kind.ollama.defaultBaseURL)!
+            return await OllamaProvider.availableModels(baseURL: base)
         case .gemini:
             let all = await GeminiProvider.availableModels(apiKey: config.apiKey)
             // 列表里混着 tts / image / live / native-audio 这些专用模型，不能拿来对话
@@ -343,8 +348,6 @@ enum Settings {
             return free
                 .filter { !FreeModelCatalog.isNonChatModel($0.id) }
                 .map(\.id)
-        case .ollama:
-            return []
         }
     }
 

@@ -84,7 +84,7 @@ public struct OllamaProvider: LLMProvider {
             // 关掉思维链：qwen3 系默认会先吐一大段 thinking，面板里等不起
             "think": false,
             // 让模型留在显存里，第二次唤起时首 token 更快
-            "keep_alive": "30m",
+            "keep_alive": "10m",
             "options": [
                 "temperature": temperature,
                 "num_predict": 1024,

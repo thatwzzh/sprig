@@ -10,9 +10,10 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
     /// 看起来像是点不开、或者像开了两个窗口。
     private static let windowLevel = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + 1)
 
-    // 本地：只有一条 Ollama，模型名手填
+    // 本地：只填地址，模型清单靠同步
     private let localURLField = NSTextField(string: "")
-    private let localModelField = NSTextField(string: "")
+    private let localSyncButton = PointerButton(title: "同步模型", target: nil, action: nil)
+    private let localModelsLabel = NSTextField(labelWithString: "")
     // 免费：Gemini 和 OpenRouter 并列，各自一条 Key
     private let geminiKeyField = NSSecureTextField(string: "")
     private let openRouterKeyField = NSSecureTextField(string: "")
@@ -77,24 +78,26 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
 
         addSectionTitle("模型接入", y: 654, to: contentView)
 
-        // ── 本地：地址和模型名一行 ──
-        addGroupTitle("本地 · Ollama 跑在本机，模型名手填", y: 628, to: contentView)
+        // ── 本地：只填地址，模型靠同步，和免费类一个模式 ──
+        addGroupTitle("本地 · Ollama 跑在本机，模型靠同步拉取", y: 628, to: contentView)
         configure(localURLField, placeholder: "Ollama 地址")
-        localURLField.frame = NSRect(x: 24, y: 598, width: 196, height: 24)
+        localURLField.frame = NSRect(x: 24, y: 598, width: 240, height: 24)
         contentView.addSubview(localURLField)
 
-        configure(localModelField, placeholder: "模型名")
-        localModelField.frame = NSRect(x: 226, y: 598, width: 168, height: 24)
-        contentView.addSubview(localModelField)
+        localSyncButton.target = self
+        localSyncButton.action = #selector(syncModelsTapped)
+        localSyncButton.bezelStyle = .rounded
+        localSyncButton.controlSize = .small
+        localSyncButton.font = .systemFont(ofSize: 12)
+        localSyncButton.frame = NSRect(x: 270, y: 597, width: 104, height: 26)
+        localSyncButton.toolTip = "列出本机 Ollama 已 pull 的模型"
+        contentView.addSubview(localSyncButton)
 
-        fetchButton.target = self
-        fetchButton.action = #selector(fetchModels)
-        fetchButton.bezelStyle = .rounded
-        fetchButton.controlSize = .small
-        fetchButton.font = .systemFont(ofSize: 12)
-        fetchButton.frame = NSRect(x: 400, y: 597, width: 76, height: 26)
-        fetchButton.toolTip = "列出本机 Ollama 已 pull 的模型"
-        contentView.addSubview(fetchButton)
+        localModelsLabel.font = .systemFont(ofSize: 11)
+        localModelsLabel.textColor = .secondaryLabelColor
+        localModelsLabel.lineBreakMode = .byTruncatingTail
+        localModelsLabel.frame = NSRect(x: 380, y: 603, width: 96, height: 16)
+        contentView.addSubview(localModelsLabel)
 
         // ── 免费：两条并列，各自一个 Key ──
         addGroupTitle("免费 · 模型清单从接口拉，面板里可逐个切换", y: 570, to: contentView)
@@ -140,7 +143,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         contentView.addSubview(orHelp)
 
         syncFreeButton.target = self
-        syncFreeButton.action = #selector(syncFreeModelsTapped)
+        syncFreeButton.action = #selector(syncModelsTapped)
         syncFreeButton.bezelStyle = .rounded
         syncFreeButton.controlSize = .small
         syncFreeButton.font = .systemFont(ofSize: 12)
@@ -357,7 +360,9 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
     private func loadLocalFields() {
         guard let config = localConfig else { return }
         localURLField.stringValue = config.baseURL
-        localModelField.stringValue = config.model
+        let count = config.cachedModels?.count ?? 0
+        localModelsLabel.stringValue = count > 0 ? "\(count) 个模型" : "点同步拉取"
+        localModelsLabel.toolTip = "当前使用：\(Settings.activeConfig.modelLabel)"
     }
 
     private func persistLocal() {
@@ -365,7 +370,6 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         guard let index = configs.firstIndex(where: { $0.resolvedCategory == .local }) else { return }
         configs[index].category = .local
         configs[index].baseURL = localURLField.stringValue
-        configs[index].model = localModelField.stringValue
         Settings.providerConfigs = configs
     }
 
@@ -511,62 +515,25 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
 
     // MARK: - 拉取 / 测试
 
-    /// 「拉取」只服务于本地区域——列出本机 Ollama 已 pull 的模型。
-    /// 免费类的清单靠「同步模型」自动维护，自定义类的模型名用户自己填。
-    @objc private func fetchModels() {
-        persistLocal()
-        guard let config = localConfig else { return }
-
-        fetchButton.isEnabled = false
-
-        Task { @MainActor in
-            let base = URL(string: config.baseURL) ?? URL(string: ProviderConfig.Kind.ollama.defaultBaseURL)!
-            let models = await OllamaProvider.availableModels(baseURL: base)
-            fetchButton.isEnabled = true
-
-            guard !models.isEmpty else {
-                // 状态栏只用来显示测试结果，拉取失败的提示走弹窗
-                let alert = NSAlert()
-                alert.messageText = "没读到本地模型"
-                alert.informativeText = "确认 ollama serve 在跑，地址填对了（当前：\(config.baseURL)）。"
-                alert.runModal()
-                return
-            }
-            presentModelMenu(models)
-        }
-    }
-
-    private func presentModelMenu(_ models: [String]) {
-        let menu = NSMenu()
-        menu.autoenablesItems = false
-        for name in models.prefix(40) {
-            let item = NSMenuItem(title: name, action: #selector(pickModel(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = name
-            menu.addItem(item)
-        }
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: fetchButton.bounds.height), in: fetchButton)
-    }
-
-    @objc private func pickModel(_ sender: NSMenuItem) {
-        guard let name = sender.representedObject as? String else { return }
-        localModelField.stringValue = name
-        persistLocal()
-    }
-
     /// 打开「去哪里领 Key」的页面
-    @objc private func syncFreeModelsTapped() {
+    /// 本地和免费共用一个同步动作：本地列本机已 pull 的，免费列接口返回的
+    @objc private func syncModelsTapped() {
+        localSyncButton.isEnabled = false
         syncFreeButton.isEnabled = false
+        localModelsLabel.stringValue = "同步中…"
         freeModelsLabel.stringValue = "同步中…"
 
         Task { @MainActor in
             let ok = await Settings.syncFreeModels()
+            localSyncButton.isEnabled = true
             syncFreeButton.isEnabled = true
 
             guard ok else {
+                localModelsLabel.stringValue = "失败"
                 freeModelsLabel.stringValue = "拉取失败，检查网络 / Key"
                 return
             }
+            loadLocalFields()
             loadFreeFields()
             // 清单里混着下架、无权限、限流的模型，拉完立刻探一遍，
             // 否则用户第一次提问才会发现某个模型用不了
@@ -671,7 +638,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         switch field {
         case webSearchKeyField:
             Settings.webSearchAPIKey = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        case localURLField, localModelField:
+        case localURLField:
             persistLocal()
         case geminiKeyField, openRouterKeyField:
             persistFree()
@@ -745,7 +712,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
     /// 无界面校验：`Sprig --settings --dump` 打印表单状态后退出
     func debugDump() {
         print("local.url          =", localURLField.stringValue.isEmpty ? "(空)" : localURLField.stringValue)
-        print("local.model        =", localModelField.stringValue.isEmpty ? "(空)" : localModelField.stringValue)
+        print("local.modelsLabel  =", localModelsLabel.stringValue)
         print("gemini.hasKey      =", geminiKeyField.stringValue.isEmpty ? "否" : "是")
         print("openrouter.hasKey  =", openRouterKeyField.stringValue.isEmpty ? "否" : "是")
         print("free.modelsLabel   =", freeModelsLabel.stringValue)
