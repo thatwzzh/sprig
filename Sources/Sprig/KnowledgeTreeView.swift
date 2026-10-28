@@ -551,21 +551,27 @@ extension KnowledgeTreeView: NSOutlineViewDelegate {
         return cell
     }
 
+    /// 每行标题都用，缓存字体和段落样式——树刷新时是 N 行 × 新建
+    private static let titleParagraph: NSParagraphStyle = {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingTail
+        return paragraph
+    }()
+    private static let titleFont = NSFont.systemFont(ofSize: 12, weight: .regular)
+    private static let titleFontMatch = NSFont.systemFont(ofSize: 12, weight: .semibold)
+
     private func attributedTitle(for node: TreeNode, isMatch: Bool) -> NSAttributedString {
         let title = node.card.title
         let query = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         let isDimmed = !query.isEmpty && !isMatch
 
         // 标题被删除按钮挤窄时用省略号收尾，而不是硬裁掉半个字
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineBreakMode = .byTruncatingTail
-
         let text = NSMutableAttributedString(
             string: title,
             attributes: [
-                .font: NSFont.systemFont(ofSize: 12, weight: isMatch ? .semibold : .regular),
+                .font: isMatch ? Self.titleFontMatch : Self.titleFont,
                 .foregroundColor: isDimmed ? NSColor.secondaryLabelColor : NSColor.labelColor,
-                .paragraphStyle: paragraph,
+                .paragraphStyle: Self.titleParagraph,
             ]
         )
 

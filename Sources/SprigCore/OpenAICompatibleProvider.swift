@@ -24,12 +24,8 @@ public struct OpenAICompatibleProvider: LLMProvider {
         self.apiKey = apiKey
         self.model = model
         self.temperature = temperature
-
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = 300
-        config.timeoutIntervalForResource = 900
-        config.waitsForConnectivity = false
-        self.session = URLSession(configuration: config)
+        // 复用全局 session：每次新建会重做 TLS 握手，首字延迟明显变长
+        self.session = HTTPClient.streaming
     }
 
     public func stream(messages: [ChatMessage]) -> AsyncThrowingStream<String, Error> {

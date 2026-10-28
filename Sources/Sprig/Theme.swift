@@ -34,10 +34,11 @@ enum Theme {
     static let answerFont = NSFont.systemFont(ofSize: 13.5)
     static let answerFontPointSize: CGFloat = 13.5
 
-    static var answerParagraph: NSParagraphStyle {
+    /// 段落样式：流式时每个 chunk 追加都要用，做成常量避免反复分配
+    static let answerParagraph: NSParagraphStyle = {
         let style = NSMutableParagraphStyle()
         style.lineSpacing = 4
         style.paragraphSpacing = 6
         return style
-    }
+    }()
 }

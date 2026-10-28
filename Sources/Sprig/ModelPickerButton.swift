@@ -10,6 +10,27 @@ final class ModelPickerButton: NSButton {
     private static let horizontalPadding: CGFloat = 10
     private static let chevronSpace: CGFloat = 18
 
+    /// 流式输出时面板每 40ms 重排一次，这个按钮跟着重绘。
+    /// 这几个属性原先都在 draw 里现构造——SF Symbol 的 withSymbolConfiguration 尤其贵——
+    /// 改成常量后每次重绘只剩两次字符串绘制。
+    private static let measureAttributes: [NSAttributedString.Key: Any] = [
+        .font: labelFont,
+        .foregroundColor: NSColor.secondaryLabelColor,
+    ]
+
+    private static let drawAttributes: [NSAttributedString.Key: Any] = {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingTail
+        return [
+            .font: labelFont,
+            .foregroundColor: NSColor.secondaryLabelColor,
+            .paragraphStyle: paragraph,
+        ]
+    }()
+
+    /// SF Symbol 上色后是烘焙进图像的，浅色/深色切换要重建，见 viewDidChangeEffectiveAppearance
+    nonisolated(unsafe) private static var chevronImage: NSImage?
+
     var label: String = "" {
         didSet {
             guard label != oldValue else { return }
@@ -34,6 +55,12 @@ final class ModelPickerButton: NSButton {
 
     override var intrinsicContentSize: NSSize {
         NSSize(width: Self.width, height: Self.height)
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        Self.chevronImage = nil
+        needsDisplay = true
     }
 
     override func updateTrackingAreas() {
@@ -61,29 +88,14 @@ final class ModelPickerButton: NSButton {
         NSColor.labelColor.withAlphaComponent(highlighted ? 0.10 : 0.06).setFill()
         NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 6, yRadius: 6).fill()
 
-        let textAttributes: [NSAttributedString.Key: Any] = [
-            .font: Self.labelFont,
-            .foregroundColor: NSColor.secondaryLabelColor,
-        ]
-        let textHeight = (label as NSString).size(withAttributes: textAttributes).height
+        let textHeight = (label as NSString).size(withAttributes: Self.measureAttributes).height
         let textRect = NSRect(x: Self.horizontalPadding,
                               y: (bounds.height - textHeight) / 2,
                               width: bounds.width - Self.horizontalPadding - Self.chevronSpace,
                               height: textHeight)
+        (label as NSString).draw(in: textRect, withAttributes: Self.drawAttributes)
 
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineBreakMode = .byTruncatingTail
-        (label as NSString).draw(in: textRect, withAttributes: [
-            .font: Self.labelFont,
-            .foregroundColor: NSColor.secondaryLabelColor,
-            .paragraphStyle: paragraph,
-        ])
-
-        let symbolConfig = NSImage.SymbolConfiguration(pointSize: 8, weight: .semibold)
-            .applying(NSImage.SymbolConfiguration(paletteColors: [.secondaryLabelColor]))
-        if let chevron = NSImage(systemSymbolName: "chevron.down",
-                                 accessibilityDescription: nil)?
-            .withSymbolConfiguration(symbolConfig) {
+        if let chevron = Self.chevron() {
             let size = chevron.size
             let rect = NSRect(x: bounds.maxX - Self.horizontalPadding - size.width,
                               y: (bounds.height - size.height) / 2,
@@ -91,5 +103,15 @@ final class ModelPickerButton: NSButton {
                               height: size.height)
             chevron.draw(in: rect)
         }
+    }
+
+    private static func chevron() -> NSImage? {
+        if let cached = chevronImage { return cached }
+        let config = NSImage.SymbolConfiguration(pointSize: 8, weight: .semibold)
+            .applying(NSImage.SymbolConfiguration(paletteColors: [.secondaryLabelColor]))
+        let image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)?
+            .withSymbolConfiguration(config)
+        chevronImage = image
+        return image
     }
 }

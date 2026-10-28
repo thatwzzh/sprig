@@ -16,26 +16,53 @@ enum Settings {
     private static let legacyModelKey = "ollamaModel"
     private static let legacyBaseURLKey = "ollamaBaseURL"
 
-    static let defaultModel = ProviderConfig.Kind.ollama.defaultModel
-
     // MARK: - 模型接入
 
     /// 全部接入配置。没存过时给出内置的 Gemini + Ollama 两条。
+    ///
+    /// 加了内存缓存：这个 getter 在流式发起的路径上被间接调用两次
+    /// （`activeConfig` 里先取 `providerConfigs`、再取 `activeProviderID`，后者又取一遍），
+    /// 每次都做一次 JSON 解码没必要。写入时同步更新缓存，所以不会读到旧值。
     static var providerConfigs: [ProviderConfig] {
         get {
-            if let data = UserDefaults.standard.data(forKey: providersKey),
-               let decoded = try? JSONDecoder().decode([ProviderConfig].self, from: data),
-               !decoded.isEmpty {
-                return decoded
+            configsLock.lock()
+            if let cached = configsCache {
+                configsLock.unlock()
+                return cached
             }
-            return ProviderConfig.builtins(ollamaModel: legacyModel, ollamaBaseURL: legacyBaseURL)
+            configsLock.unlock()
+
+            let value = loadProviderConfigs()
+
+            configsLock.lock()
+            configsCache = value
+            configsLock.unlock()
+            return value
         }
         set {
-            let value = newValue.isEmpty ? ProviderConfig.builtins(ollamaModel: legacyModel, ollamaBaseURL: legacyBaseURL) : newValue
+            let value = newValue.isEmpty
+                ? ProviderConfig.builtins(ollamaModel: legacyModel, ollamaBaseURL: legacyBaseURL)
+                : newValue
             guard let data = try? JSONEncoder().encode(value) else { return }
             UserDefaults.standard.set(data, forKey: providersKey)
+            // 落盘成功后再更新缓存，避免编码失败时缓存和磁盘不一致
+            configsLock.lock()
+            configsCache = value
+            configsLock.unlock()
             NotificationCenter.default.post(name: .sprigProvidersDidChange, object: nil)
         }
+    }
+
+    private static let configsLock = NSLock()
+    nonisolated(unsafe) private static var configsCache: [ProviderConfig]?
+
+    private static func loadProviderConfigs() -> [ProviderConfig] {
+        if let data = UserDefaults.standard.data(forKey: providersKey),
+           let decoded = try? JSONDecoder().decode([ProviderConfig].self, from: data),
+           !decoded.isEmpty {
+            return decoded
+        }
+        return ProviderConfig.builtins(ollamaModel: legacyModel, ollamaBaseURL: legacyBaseURL)
     }
 
     /// 当前使用的接入。存的是 UUID 字符串。
@@ -68,12 +95,18 @@ enum Settings {
         let id = activeProviderID
         var config = configs.first(where: { $0.id == id }) ?? configs[0]
         // 便于 --headless 调试时临时换模型：SPRIG_MODEL=gemini-2.5-flash
-        let env = ProcessInfo.processInfo.environment
-        if let override = env["SPRIG_MODEL"] ?? env["CONCEPTLENS_MODEL"], !override.isEmpty {
-            config.model = override
-        }
+        // 环境变量只在进程内变，读一次就够；每次访问 ProcessInfo.environment 都要重建整个字典
+        if let override = modelOverride { config.model = override }
         return config
     }
+
+    private static let modelOverride: String? = {
+        let env = ProcessInfo.processInfo.environment
+        guard let value = env["SPRIG_MODEL"] ?? env["CONCEPTLENS_MODEL"], !value.isEmpty else {
+            return nil
+        }
+        return value
+    }()
 
     static var provider: LLMProvider {
         activeConfig.makeProvider()
