@@ -20,6 +20,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Settings.ensureLocalConfig()
         // Gemini 旧模型下线后要换名字，否则一直 404
         Settings.migrateRetiredGeminiModels()
+        // 自定义代理要在任何请求之前生效
+        HTTPClient.proxy = Settings.customProxy
 
         setupMainMenu()
         setupStatusItem()

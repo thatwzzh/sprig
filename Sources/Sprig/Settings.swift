@@ -214,6 +214,18 @@ enum Settings {
     private static let searchBackendKey = "searchBackend"
     private static let tavilyAPIKeyKey = "tavilyAPIKey"
     private static let deepseekSearchKeyKey = "deepseekSearchAPIKey"
+    private static let customProxyKey = "customProxy"
+
+    /// 全局 HTTP 代理，形如 http://127.0.0.1:7890。空表示跟随系统设置。
+    /// 改完立刻重建 URLSession，下一次请求就生效。
+    static var customProxy: String {
+        get { UserDefaults.standard.string(forKey: customProxyKey) ?? "" }
+        set {
+            let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            UserDefaults.standard.set(trimmed, forKey: customProxyKey)
+            HTTPClient.proxy = trimmed
+        }
+    }
     /// 早期只有一个搜索 Key，切后端时留作兼容
     private static let legacyWebSearchKey = "webSearchAPIKey"
 

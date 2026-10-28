@@ -102,7 +102,7 @@ public enum WebSearchTool {
     public static func execute(argumentsJSON: String,
                                backend: SearchBackend,
                                apiKey: String,
-                               session: URLSession = .shared) async throws -> SearchReport {
+                               session: URLSession = HTTPClient.streaming) async throws -> SearchReport {
         let query = try parseQuery(argumentsJSON)
         let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else {

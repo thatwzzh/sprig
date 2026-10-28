@@ -37,6 +37,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
     private let thinkingToggle = NSButton(checkboxWithTitle: "关闭思考链", target: nil, action: nil)
     private let searchBackendPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private let webSearchKeyField = NSSecureTextField(string: "")
+    private let proxyField = NSTextField(string: "")
     private let webSearchHelpButton = PointerButton(title: "去获取", target: nil, action: nil)
 
     /// 自定义下拉里每一项对应的配置 id
@@ -277,6 +278,20 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         webSearchHelpButton.toolTip = searchHelpTooltip()
         contentView.addSubview(webSearchHelpButton)
 
+        let proxyLabel = NSTextField(labelWithString: "代理")
+        proxyLabel.font = .systemFont(ofSize: 12)
+        proxyLabel.textColor = .secondaryLabelColor
+        proxyLabel.frame = NSRect(x: 24, y: 154, width: 40, height: 18)
+        contentView.addSubview(proxyLabel)
+
+        proxyField.placeholderString = "http://127.0.0.1:7890（留空则跟随系统）"
+        proxyField.font = .systemFont(ofSize: 12)
+        proxyField.delegate = self
+        proxyField.stringValue = Settings.customProxy
+        proxyField.toolTip = "所有模型和搜索请求都走这个代理；改了立刻生效"
+        proxyField.frame = NSRect(x: 68, y: 150, width: 332, height: 24)
+        contentView.addSubview(proxyField)
+
         let hint = NSTextField(wrappingLabelWithString:
             "API Key 只写入本机偏好设置，不会上传；需要 Key 的接入右侧都有「去获取」。\n"
             + "「OpenAI 兼容」适用于 OpenAI / DeepSeek / Groq / 智谱 / 火山 / 百炼 等，"
@@ -285,7 +300,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
             + "联网搜索可切 Tavily（1000 次/月免费）或 DeepSeek（5 元/1000 次，中文更强）。")
         hint.font = .systemFont(ofSize: 11)
         hint.textColor = .secondaryLabelColor
-        hint.frame = NSRect(x: 24, y: 12, width: 452, height: 158)
+        hint.frame = NSRect(x: 24, y: 12, width: 452, height: 130)
         contentView.addSubview(hint)
 
         reloadAll()
@@ -642,6 +657,8 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
             persistLocal()
         case geminiKeyField, openRouterKeyField:
             persistFree()
+        case proxyField:
+            Settings.customProxy = field.stringValue
         case customNameField, customURLField, customKeyField, customModelField:
             persistCustom()
         default:
