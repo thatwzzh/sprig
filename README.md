@@ -144,6 +144,9 @@ qwen3 > gemma-4-31b > nemotron-3-super > 星辰 > minimax > inkling-small > ligh
 
 配置：设置页 →「联网搜索」→ 打开开关 → 填 Tavily 的 Key（[tavily.com](https://tavily.com/)，免费 1000 次/月）。
 
+问答过程中想临时搜一下就点输入框右侧的地球仪——开着时图标变蓝。没填 Key 时点它会直接跳到设置页，
+而不是毫无反应。
+
 实现方式是自己走 tool use，不是 OpenRouter 的 `:online` 插件（那个每次 $0.007）：
 
 ```

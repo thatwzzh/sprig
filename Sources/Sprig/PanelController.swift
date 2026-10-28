@@ -88,6 +88,7 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         content.tree.onDelete = { [weak self] card in self?.requestDelete(card) }
 
         content.onTreeToggle = { [weak self] in self?.toggleTree() }
+        content.onSearchToggle = { [weak self] in self?.toggleWebSearch() }
 
         content.modelButton.target = self
         content.modelButton.action = #selector(showModelMenu)
@@ -99,7 +100,10 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            DispatchQueue.main.async { self?.refreshModelButton() }
+            DispatchQueue.main.async {
+                self?.refreshModelButton()
+                self?.content.refreshSearchToggle()
+            }
         }
 
         // 滚动后选区矩形失效，动作条先收起，避免浮在错误位置
@@ -168,6 +172,8 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
             return
         }
         isVisible = true
+        // 设置页可能改过联网开关，打开时对一次状态
+        content.refreshSearchToggle()
         reposition()
         bringToActiveSpace()
         panel.alphaValue = 0
@@ -399,6 +405,17 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
 
     func toggleTree() {
         setTreeVisible(!isTreeVisible)
+    }
+
+    /// 输入框右侧的联网搜索开关。
+    /// 没配 Key 时直接打开设置——比让用户点一下没反应、再自己找原因强。
+    func toggleWebSearch() {
+        guard !Settings.webSearchAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            SettingsWindowController.shared.present()
+            return
+        }
+        Settings.webSearchEnabled.toggle()
+        content.refreshSearchToggle()
     }
 
     /// 全局快捷键：面板没开就先打开并展开树，已开则切换显隐

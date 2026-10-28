@@ -22,9 +22,11 @@ final class PanelContentView: NSView {
     let selectionBar = SelectionActionBar()
     let tree = KnowledgeTreeView()
     let treeToggle = PointerButton()
+    let searchToggle = PointerButton()
     let modelButton = ModelPickerButton()
 
     var onTreeToggle: (() -> Void)?
+    var onSearchToggle: (() -> Void)?
 
     private let blur = NSVisualEffectView()
     private let treeDivider = NSView()
@@ -94,6 +96,16 @@ final class PanelContentView: NSView {
         treeToggle.toolTip = "展开知识树（⌘⇧T）"
         addSubview(treeToggle)
 
+        searchToggle.isBordered = false
+        searchToggle.bezelStyle = .inline
+        searchToggle.image = NSImage(systemSymbolName: "globe", accessibilityDescription: "联网搜索")
+        searchToggle.imagePosition = .imageOnly
+        searchToggle.contentTintColor = .secondaryLabelColor
+        searchToggle.target = self
+        searchToggle.action = #selector(handleSearchToggle)
+        addSubview(searchToggle)
+        refreshSearchToggle()
+
         addSubview(modelButton)
 
         treeDivider.wantsLayer = true
@@ -156,6 +168,21 @@ final class PanelContentView: NSView {
         onTreeToggle?()
     }
 
+    @objc private func handleSearchToggle() {
+        onSearchToggle?()
+    }
+
+    /// 开关状态变了（自己点，或设置页改过）就同步图标颜色和提示
+    func refreshSearchToggle() {
+        let enabled = Settings.webSearchEnabled
+        searchToggle.contentTintColor = enabled ? .controlAccentColor : .secondaryLabelColor
+        if Settings.webSearchAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            searchToggle.toolTip = "联网搜索：还没填 Tavily Key（点击去设置）"
+        } else {
+            searchToggle.toolTip = enabled ? "联网搜索：开（点击关闭）" : "联网搜索：关（点击开启）"
+        }
+    }
+
     /// rect 为内容坐标系里的选区矩形（左下原点）
     func showSelectionBar(below rect: NSRect) {
         let size = SelectionActionBar.barSize
@@ -203,12 +230,22 @@ final class PanelContentView: NSView {
                                   width: Theme.treeToggleSize,
                                   height: Theme.treeToggleSize)
 
+        // 联网搜索开关：和模型胶囊同一行，垂直居中于输入框
+        let searchY = top - inputHeight + (Theme.inputMinHeight - Theme.searchToggleSize) / 2
+        searchToggle.frame = NSRect(
+            x: rightEdge - Theme.treeToggleSize - Theme.modelButtonGap - Theme.searchToggleSize,
+            y: searchY,
+            width: Theme.searchToggleSize,
+            height: Theme.searchToggleSize)
+
         // 模型按钮贴在输入框右下角：单行输入时正好垂直居中，多行时留在底部
         let pickerY = top - inputHeight + (Theme.inputMinHeight - ModelPickerButton.height) / 2
-        modelButton.frame = NSRect(x: rightEdge - Theme.treeToggleSize - Theme.modelButtonGap - ModelPickerButton.width,
-                                   y: pickerY,
-                                   width: ModelPickerButton.width,
-                                   height: ModelPickerButton.height)
+        modelButton.frame = NSRect(
+            x: rightEdge - Theme.treeToggleSize - Theme.modelButtonGap - Theme.searchToggleSize
+                - Theme.modelButtonGap - ModelPickerButton.width,
+            y: pickerY,
+            width: ModelPickerButton.width,
+            height: ModelPickerButton.height)
 
         inputScroll.frame = NSRect(x: Theme.horizontalInset,
                                    y: top - inputHeight,

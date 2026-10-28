@@ -15,11 +15,16 @@ enum Theme {
 
     static let horizontalInset: CGFloat = 16
 
-    /// 输入框右侧让给「知识树按钮 + 模型切换按钮」的宽度。
+    /// 输入框右侧让给「知识树按钮 + 联网搜索开关 + 模型切换按钮」的宽度。
     /// 树按钮即使隐藏也留位，否则开关树时输入框宽度变化会让文字重排、高度抖动。
     static let treeToggleSize: CGFloat = 22
     static let modelButtonGap: CGFloat = 8
-    static let inputAccessoryWidth: CGFloat = treeToggleSize + modelButtonGap + ModelPickerButton.width + modelButtonGap
+    /// 联网搜索开关，和树按钮同尺寸，只是位置不同（贴着输入框）
+    static let searchToggleSize: CGFloat = 22
+    static let inputAccessoryWidth: CGFloat = treeToggleSize
+        + modelButtonGap + searchToggleSize
+        + modelButtonGap + ModelPickerButton.width
+        + modelButtonGap
     /// 输入框里文字可用的宽度
     static let inputTextWidth: CGFloat = panelWidth - horizontalInset * 2 - inputAccessoryWidth
 
