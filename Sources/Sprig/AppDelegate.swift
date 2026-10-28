@@ -16,6 +16,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Settings.prepareCardsDirectory()
         // 老配置没有 contextLength 字段，按 kind 补一次；Ollama/OpenRouter 的真实值靠后面的探测和同步
         Settings.backfillContextLengths()
+        // 内置 Ollama 被改成别的协议后，本地区域会空掉，补一条回来
+        Settings.ensureLocalConfig()
 
         setupMainMenu()
         setupStatusItem()

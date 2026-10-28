@@ -68,7 +68,7 @@ UI 层不直接读文件，Core 层不 import AppKit——这条边界让「解�
 | `TermParser` | 流式解析 | 未闭合持有、换行/超长降级、嵌套重开 |
 | `ContextAssembler` | 上下文 | 按模型真实窗口动态算预算（本地固定紧预算）；预留搜索结果空间；按句子边界截断 |
 | `CardStore` | 存储 | `actor`，JSON 原子写入；删除级联 |
-| `ProviderConfig` | 接入配置 | 名称/协议/Base URL/API Key/模型，Codable 存 UserDefaults |
+| `ProviderConfig` | 接入配置 | 名称/协议/Base URL/Key/模型，Codable 存 UserDefaults；`category` 分本地/免费/自定义，`cachedModels` 存免费类展开的模型清单 |
 | `OllamaProvider` | 模型 | NDJSON；`think:false`、`num_ctx:8192`、`keep_alive:30m` |
 | `OpenAICompatibleProvider` | 模型 | SSE；`/v1/chat/completions`，Base URL 自动归一化 |
 | `GeminiProvider` | 模型 | 原生 SSE；`systemInstruction` + `x-goog-api-key` |

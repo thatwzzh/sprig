@@ -59,6 +59,24 @@ public struct ProviderConfig: Codable, Identifiable, Sendable, Equatable {
         }
     }
 
+    /// 设置页和面板菜单按这三类组织。
+    public enum Category: String, Codable, Sendable, CaseIterable {
+        /// 本机推理，默认 Ollama，模型名手填
+        case local
+        /// Gemini / OpenRouter，模型清单从接口拉
+        case free
+        /// 用户自填 Base URL + Key + 模型名
+        case custom
+
+        public var title: String {
+            switch self {
+            case .local: return "本地"
+            case .free: return "免费"
+            case .custom: return "自定义"
+            }
+        }
+    }
+
     /// 内置项用固定 id，跨启动稳定
     public static let builtinGeminiID = UUID(uuidString: "5A1B0C00-0000-4000-8000-00000000A001")!
     public static let builtinOllamaID = UUID(uuidString: "0A11AB00-0000-4000-8000-00000000B002")!
@@ -77,6 +95,10 @@ public struct ProviderConfig: Codable, Identifiable, Sendable, Equatable {
     /// 模型的上下文窗口（token 数）。nil = 未知，装配上下文时用保守默认。
     /// 可选字段，旧数据解码出来就是 nil，不需要迁移。
     public var contextLength: Int?
+    /// 分类。nil 表示旧数据，读的时候按 kind/baseURL 推断。
+    public var category: Category?
+    /// 免费类从接口拉到的全部可用模型。面板菜单会把它们逐个列出来。
+    public var cachedModels: [String]?
 
     public init(id: UUID = UUID(),
                 name: String,
@@ -85,7 +107,9 @@ public struct ProviderConfig: Codable, Identifiable, Sendable, Equatable {
                 apiKey: String = "",
                 model: String,
                 isBuiltin: Bool = false,
-                contextLength: Int? = nil) {
+                contextLength: Int? = nil,
+                category: Category? = nil,
+                cachedModels: [String]? = nil) {
         self.id = id
         self.name = name
         self.kind = kind
@@ -94,6 +118,31 @@ public struct ProviderConfig: Codable, Identifiable, Sendable, Equatable {
         self.model = model
         self.isBuiltin = isBuiltin
         self.contextLength = contextLength
+        self.category = category
+        self.cachedModels = cachedModels
+    }
+
+    /// 读取时用的分类。旧配置没有这个字段，按 kind 和 baseURL 推断：
+    /// Ollama 是本地，Gemini 和 OpenRouter 归免费，其余 OpenAI 兼容都是自定义。
+    public var resolvedCategory: Category {
+        if let category { return category }
+        switch kind {
+        case .ollama:
+            return .local
+        case .gemini:
+            return .free
+        case .openAICompatible:
+            return baseURL.lowercased().contains("openrouter") ? .free : .custom
+        }
+    }
+
+    /// 免费类要展开的模型清单；非免费类只返回当前模型
+    public var selectableModels: [String] {
+        guard resolvedCategory == .free,
+              let cached = cachedModels, !cached.isEmpty else {
+            return [model].filter { !$0.isEmpty }
+        }
+        return cached
     }
 
     public var displayName: String {
@@ -161,13 +210,15 @@ public extension ProviderConfig {
                            model: Kind.gemini.defaultModel,
                            isBuiltin: true,
                            // gemini-2.5-flash 是 1M 窗口，这是内置项里少数能确定的值
-                           contextLength: 1_048_576),
+                           contextLength: 1_048_576,
+                           category: .free),
             ProviderConfig(id: builtinOllamaID,
                            name: "Ollama 本地",
                            kind: .ollama,
                            baseURL: ollamaBaseURL.isEmpty ? Kind.ollama.defaultBaseURL : ollamaBaseURL,
                            model: ollamaModel.isEmpty ? Kind.ollama.defaultModel : ollamaModel,
-                           isBuiltin: true),
+                           isBuiltin: true,
+                           category: .local),
         ]
     }
 
@@ -180,7 +231,8 @@ public extension ProviderConfig {
                        baseURL: FreeModelCatalog.openRouterBaseURL,
                        model: model,
                        isBuiltin: true,
-                       contextLength: contextLength)
+                       contextLength: contextLength,
+                       category: .free)
     }
 
     /// 这条接入该去哪里领 API Key。设置页据此显示可点的「去获取」。

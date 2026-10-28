@@ -132,6 +132,20 @@ enum Settings {
         activeProviderID = id
     }
 
+    /// 保证「本地」分类始终有一条 Ollama。
+    /// 用户可能把内置那条改成别的协议（改 Base URL 到 api.openai.com 之类），
+    /// 那样本地区域会空着——本地推理是常用入口，不能让它消失。
+    static func ensureLocalConfig() {
+        guard !providerConfigs.contains(where: { $0.resolvedCategory == .local }) else { return }
+        var configs = providerConfigs
+        configs.append(ProviderConfig(name: "Ollama 本地",
+                                      kind: .ollama,
+                                      baseURL: ProviderConfig.Kind.ollama.defaultBaseURL,
+                                      model: ProviderConfig.Kind.ollama.defaultModel,
+                                      category: .local))
+        providerConfigs = configs
+    }
+
     /// 老配置里没有 contextLength 字段，按 kind 能确定的补上。
     /// 不补的话，用云端模型时上下文预算会退回保守的 12000 字，白白浪费窗口。
     static func backfillContextLengths() {
@@ -251,10 +265,10 @@ enum Settings {
 
     /// 超过一天就该重新拉一次
     static var needsFreeModelSync: Bool {
-        // 接入在但缺窗口信息，也补一次——不然上下文预算会退回保守值
-        if let index = providerConfigs.firstIndex(where: { $0.id == ProviderConfig.builtinOpenRouterFreeID }),
-           providerConfigs[index].contextLength == nil {
-            return true
+        // 免费类要么没拉过清单（旧版本只有单模型），要么缺窗口信息，都补一次
+        for config in providerConfigs where config.resolvedCategory == .free {
+            if config.cachedModels?.isEmpty ?? true { return true }
+            if config.contextLength == nil { return true }
         }
         guard let last = freeModelsLastSync else { return true }
         return Date().timeIntervalSince(last) >= 24 * 60 * 60
@@ -266,36 +280,51 @@ enum Settings {
     @discardableResult
     @MainActor
     static func syncFreeModels() async -> Bool {
-        guard let models = try? await FreeModelCatalog.openRouterFreeModels(), !models.isEmpty else {
-            return false
-        }
-
         var configs = providerConfigs
-        let preferred = FreeModelCatalog.preferred(from: models)
+        var updated = false
+        var total = 0
 
-        if let index = configs.firstIndex(where: { $0.id == ProviderConfig.builtinOpenRouterFreeID }) {
-            let inList = models.contains { $0.id == configs[index].model }
-            if !inList, let preferred {
-                configs[index].model = preferred.id
-                configs[index].contextLength = preferred.contextLength
-            } else if configs[index].contextLength == nil,
-                      let current = models.first(where: { $0.id == configs[index].model }) {
-                // 之前没记窗口的，这次补上
-                configs[index].contextLength = current.contextLength
+        // 免费类可能有多条（Gemini + OpenRouter），逐条拉
+        for index in configs.indices where configs[index].resolvedCategory == .free {
+            let models = await fetchFreeModels(for: configs[index])
+            guard !models.isEmpty else { continue }
+
+            configs[index].category = .free
+            configs[index].cachedModels = models
+            if !models.contains(configs[index].model) {
+                configs[index].model = models[0]
             }
-            // 名字被用户改过就不覆盖
             if configs[index].name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                configs[index].name = "OpenRouter 免费"
+                configs[index].name = configs[index].kind.title
             }
-        } else if let preferred {
-            configs.append(ProviderConfig.openRouterFree(model: preferred.id,
-                                                         contextLength: preferred.contextLength))
+            total += models.count
+            updated = true
         }
 
+        guard updated else { return false }
         providerConfigs = configs
         UserDefaults.standard.set(Date(), forKey: freeModelsLastSyncKey)
-        UserDefaults.standard.set(models.count, forKey: freeModelsCountKey)
+        UserDefaults.standard.set(total, forKey: freeModelsCountKey)
         return true
+    }
+
+    /// 拉某条免费配置的可用模型清单。
+    /// Gemini 只有 flash 系有免费额度（pro 要付费），所以这里按名字滤一下；
+    /// OpenRouter 靠 pricing 判断，再剔掉不能对话的（音乐生成、审核模型）。
+    @MainActor
+    private static func fetchFreeModels(for config: ProviderConfig) async -> [String] {
+        switch config.kind {
+        case .gemini:
+            let all = await GeminiProvider.availableModels(apiKey: config.apiKey)
+            return all.filter { $0.lowercased().contains("flash") }
+        case .openAICompatible:
+            guard let free = try? await FreeModelCatalog.openRouterFreeModels() else { return [] }
+            return free
+                .filter { !FreeModelCatalog.isNonChatModel($0.id) }
+                .map(\.id)
+        case .ollama:
+            return []
+        }
     }
 
     // MARK: - 知识库目录

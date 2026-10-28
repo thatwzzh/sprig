@@ -480,29 +480,62 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         makeModelMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: -4), in: content.modelButton)
     }
 
-    /// 所有接入排成一列，当前使用的打勾；底部入口进设置页
+    /// 按「本地 / 免费 / 自定义」分三组。免费类的全部模型逐个列出——
+    /// 一条配置对应十几个可选模型，只在设置页里切换太绕。
     private func makeModelMenu() -> NSMenu {
         let configs = Settings.providerConfigs
         let activeID = Settings.activeProviderID
+        let activeModel = Settings.activeConfig.model
         let menu = NSMenu()
         menu.autoenablesItems = false
 
-        for config in configs {
-            let title = config.isConfigured
-                ? "\(config.displayName) · \(config.modelLabel)"
-                : "\(config.displayName) · \(config.modelLabel)（未配置）"
-            let item = NSMenuItem(title: title, action: #selector(selectProvider(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = config.id.uuidString
-            item.state = config.id == activeID ? .on : .off
-            menu.addItem(item)
+        for category in ProviderConfig.Category.allCases {
+            let group = configs.filter { $0.resolvedCategory == category }
+            guard !group.isEmpty else { continue }
+
+            let header = NSMenuItem(title: category.title, action: nil, keyEquivalent: "")
+            header.isEnabled = false
+            menu.addItem(header)
+
+            for config in group {
+                for model in config.selectableModels {
+                    menu.addItem(modelItem(config: config,
+                                           model: model,
+                                           isActive: config.id == activeID && model == activeModel))
+                }
+            }
+            menu.addItem(.separator())
         }
 
-        menu.addItem(.separator())
         let manage = NSMenuItem(title: "管理模型接入…", action: #selector(openModelSettings), keyEquivalent: "")
         manage.target = self
         menu.addItem(manage)
         return menu
+    }
+
+    private func modelItem(config: ProviderConfig, model: String, isActive: Bool) -> NSMenuItem {
+        let label = config.displayName + " · " + model
+        let title = config.isConfigured ? label : label + "（未配置）"
+        let item = NSMenuItem(title: title, action: #selector(pickProviderModel(_:)), keyEquivalent: "")
+        item.target = self
+        item.representedObject = [config.id.uuidString, model]
+        item.state = isActive ? .on : .off
+        return item
+    }
+
+    /// 选模型 = 切换接入 + 把这条配置的 model 字段改掉。
+    /// 不做「模型级配置」——否则 12 个免费模型会变成 12 条接入。
+    @objc private func pickProviderModel(_ sender: NSMenuItem) {
+        guard let pair = sender.representedObject as? [String], pair.count == 2,
+              let id = UUID(uuidString: pair[0]) else { return }
+
+        var configs = Settings.providerConfigs
+        if let index = configs.firstIndex(where: { $0.id == id }) {
+            configs[index].model = pair[1]
+            Settings.providerConfigs = configs
+        }
+        Settings.selectProvider(id: id)
+        refreshModelButton()
     }
 
     @objc private func selectProvider(_ sender: NSMenuItem) {
@@ -1239,5 +1272,15 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         print("treeToggle.afterCollapse =", !content.treeToggle.isHidden)
         print("panel.width.closed =", panel.frame.width)
         print("clip.cornerRadius  =", content.layer?.cornerRadius ?? -1)
+        print("--- 模型菜单 ---")
+        for item in makeModelMenu().items {
+            if item.isSeparatorItem {
+                print("        ----")
+            } else if !item.isEnabled {
+                print("        [\(item.title)]")
+            } else {
+                print("        \(item.state == .on ? "✓ " : "  ")\(item.title)")
+            }
+        }
     }
 }

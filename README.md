@@ -79,25 +79,40 @@ ollama pull qwen3:4b-instruct       # 设置页点「拉取」可以直接挑模
 
 ## 模型接入
 
-每条接入独立保存名称、协议、Base URL、API Key、模型名，可以存任意多条，在面板里一键切换。
+分三类，设置页和面板菜单都按这个顺序组织：
 
-| 协议 | 适用 | 默认 Base URL |
+### 本地
+
+默认 Ollama，只需要填地址和模型名。模型名可以手填，也可以点「拉取」列出本机已 pull 的。
+本机推理不花钱，适合不想联网的场景。
+
+### 免费
+
+Gemini 和 OpenRouter 两条。Key 在设置页填，模型清单点「同步模型」从接口拉：
+
+| 平台 | 免费额度 | 拉到的模型 |
 |---|---|---|
-| **Google Gemini** | Gemini 原生接口（`v1beta/...:streamGenerateContent`） | `https://generativelanguage.googleapis.com` |
-| **OpenAI 兼容** | OpenAI、DeepSeek、Moonshot、Groq、OpenRouter、智谱、火山方舟、阿里百炼、LM Studio、vLLM… | `https://api.openai.com/v1` |
-| **Ollama（本地）** | 本机 Ollama | `http://127.0.0.1:11434` |
+| Gemini | 约 10–15 次/分钟 | 只列 `flash` 系（pro 要付费） |
+| OpenRouter | 约 20 次/分钟、50 次/天 | 定价为 0 且能对话的，当前 12 个 |
 
-Base URL 填到 `/v1` 或只填域名都能识别，`https://x/v1` 不会被拼成 `/v1/v1`。
+**拉到的模型全部展开到面板菜单里**，不用回设置页切换。列表每天自动刷新一次，
+当前用的模型下架了会自动换一个。
 
-几个免费额度可以直接填进「OpenAI 兼容」：
+### 自定义
+
+填名称、Base URL、Key、模型名，可以加任意多条。适用于 OpenAI、DeepSeek、Groq、智谱、
+火山方舟、阿里百炼、LM Studio、vLLM 等一切 OpenAI 兼容服务：
 
 | 平台 | Base URL | 模型示例 |
 |---|---|---|
+| OpenAI | `https://api.openai.com/v1` | `gpt-4o-mini` |
+| DeepSeek | `https://api.deepseek.com` | `deepseek-chat` |
 | Groq | `https://api.groq.com/openai/v1` | `openai/gpt-oss-120b` |
-| OpenRouter | `https://openrouter.ai/api/v1` | `nvidia/nemotron-3-super-120b-a12b:free` |
 | 智谱 | `https://open.bigmodel.cn/api/paas/v4` | `glm-4.7-flash` |
 | 火山方舟 | `https://ark.cn-beijing.volces.com/api/v3` | 控制台里的接入点 ID |
 | 阿里百炼 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-flash` |
+
+Base URL 填到 `/v1` 或只填域名都能识别，`https://x/v1` 不会被拼成 `/v1/v1`。
 
 > 免费额度变动频繁，具体以各家控制台为准；上面这几个只在写这份文档时核对过。
 
