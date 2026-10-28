@@ -85,7 +85,6 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
 
         content.breadcrumb.onSelect = { [weak self] index in self?.go(to: index) }
         content.selectionBar.onExplain = { [weak self] in self?.explainSelection() }
-        content.selectionBar.onAsk = { [weak self] in self?.followupSelection() }
 
         content.tree.onSelect = { [weak self] card in self?.navigate(to: card) }
         content.tree.onClose = { [weak self] in self?.setTreeVisible(false) }
@@ -718,18 +717,6 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
                         selection: selection,
                         title: shortTitle(selection),
                         question: "")
-    }
-
-    private func followupSelection() {
-        let selection = pendingSelection
-        guard let parent = stack.last?.card, !selection.isEmpty else { return }
-        hideSelectionBar()
-
-        pendingParentID = parent.id
-        pendingParentSelection = selection
-        let quoted = selection.count > 80 ? String(selection.prefix(80)) + "…" : selection
-        panel.makeFirstResponder(inputView)
-        inputView.setText("关于「\(quoted)」：")
     }
 
     // MARK: - 流式
