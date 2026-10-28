@@ -694,6 +694,7 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         // 没配搜索就传空数组，provider 走纯文本快路径，行为跟之前一致
         let tools: [ToolDefinition] = Settings.webSearchReady ? [WebSearchTool.definition] : []
         let searchKey = Settings.webSearchAPIKey
+        let searchBackend = Settings.searchBackend
         let maxRounds = 3
 
         streamTask = Task { @MainActor [weak self] in
@@ -740,7 +741,8 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
 
                         do {
                             let result = try await WebSearchTool.execute(argumentsJSON: call.arguments,
-                                                                        apiKey: searchKey)
+                                                                         backend: searchBackend,
+                                                                         apiKey: searchKey)
                             conversation.append(.toolResult(result, for: call.id))
                         } catch {
                             conversation.append(.toolResult("搜索失败：\(error.localizedDescription)",

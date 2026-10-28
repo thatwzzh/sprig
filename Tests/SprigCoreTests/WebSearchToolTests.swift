@@ -35,7 +35,7 @@ final class WebSearchToolTests: XCTestCase {
           {"title":"标题B","url":"https://b.com","content":"摘要 B"}
         ]}
         """.data(using: .utf8)!
-        let text = WebSearchTool.format(payload: payload, query: "测试")
+        let text = WebSearchTool.formatTavily(payload: payload, query: "测试")
 
         XCTAssertTrue(text.contains("搜索「测试」的结果"))
         XCTAssertTrue(text.contains("[1] 标题A"))
@@ -49,19 +49,94 @@ final class WebSearchToolTests: XCTestCase {
         let payload = try! JSONSerialization.data(withJSONObject: [
             "results": [["title": "T", "url": "https://x.com", "content": long]],
         ])
-        let text = WebSearchTool.format(payload: payload, query: "q")
+        let text = WebSearchTool.formatTavily(payload: payload, query: "q")
         XCTAssertTrue(text.contains("…"), "超长摘要应被截断")
         XCTAssertLessThan(text.count, 900)
     }
 
     func testFormatHandlesEmptyResults() {
         let payload = #"{"results":[]}"#.data(using: .utf8)!
-        XCTAssertTrue(WebSearchTool.format(payload: payload, query: "q").contains("没有找到结果"))
+        XCTAssertTrue(WebSearchTool.formatTavily(payload: payload, query: "q").contains("没有找到结果"))
     }
 
     func testFormatHandlesGarbagePayload() {
         let payload = "not json".data(using: .utf8)!
-        XCTAssertTrue(WebSearchTool.format(payload: payload, query: "q").contains("没有找到结果"))
+        XCTAssertTrue(WebSearchTool.formatTavily(payload: payload, query: "q").contains("没有找到结果"))
+    }
+
+    // MARK: - DeepSeek 后端
+
+    func testDeepSeekPrefersSummaryOverSnippet() {
+        let payload = """
+        {"results":[
+          {"title":"标题A","url":"https://a.com","summary":"这是给模型读的长摘要","snippet":"短摘要","rerank_score":2.1,"authority":3}
+        ]}
+        """.data(using: .utf8)!
+        let text = WebSearchTool.formatDeepSeek(payload: payload, query: "测试")
+
+        XCTAssertTrue(text.contains("[1] 标题A"))
+        XCTAssertTrue(text.contains("这是给模型读的长摘要"))
+        XCTAssertFalse(text.contains("短摘要"), "有 summary 就不该退回 snippet")
+    }
+
+    func testDeepSeekFallsBackToSnippet() {
+        let payload = """
+        {"results":[
+          {"title":"标题B","url":"https://b.com","snippet":"只有短摘要","rerank_score":2.0}
+        ]}
+        """.data(using: .utf8)!
+        let text = WebSearchTool.formatDeepSeek(payload: payload, query: "q")
+        XCTAssertTrue(text.contains("只有短摘要"))
+    }
+
+    /// rerank_score < 1.5 的低质量结果应该被剔掉
+    func testDeepSeekDropsLowScoreResults() {
+        let payload = """
+        {"results":[
+          {"title":"高质量","url":"https://good.com","summary":"好","rerank_score":2.4},
+          {"title":"低质量","url":"https://bad.com","summary":"差","rerank_score":0.8}
+        ]}
+        """.data(using: .utf8)!
+        let text = WebSearchTool.formatDeepSeek(payload: payload, query: "q")
+
+        XCTAssertTrue(text.contains("高质量"))
+        XCTAssertFalse(text.contains("低质量"))
+    }
+
+    /// 全都低于 1.5 时不能返回空，要按分数排
+    func testDeepSeekKeepsAllWhenNonePassThreshold() {
+        let payload = """
+        {"results":[
+          {"title":"较弱","url":"https://a.com","summary":"a","rerank_score":0.9},
+          {"title":"最弱","url":"https://b.com","summary":"b","rerank_score":0.3}
+        ]}
+        """.data(using: .utf8)!
+        let text = WebSearchTool.formatDeepSeek(payload: payload, query: "q")
+
+        XCTAssertTrue(text.contains("较弱"))
+        XCTAssertTrue(text.contains("最弱"))
+        // 分高的排前面
+        let first = text.range(of: "较弱")!.lowerBound
+        let second = text.range(of: "最弱")!.lowerBound
+        XCTAssertLessThan(first, second)
+    }
+
+    func testDeepSeekHandlesEmptyResults() {
+        let payload = #"{"results":[]}"#.data(using: .utf8)!
+        XCTAssertTrue(WebSearchTool.formatDeepSeek(payload: payload, query: "q").contains("没有找到结果"))
+    }
+
+    // MARK: - 后端元数据
+
+    func testSearchBackendMetadata() {
+        for backend in SearchBackend.allCases {
+            XCTAssertFalse(backend.title.isEmpty)
+            XCTAssertNotNil(backend.keyURL, "\(backend.title) 应该有领 Key 的地址")
+            XCTAssertFalse(backend.keyPlaceholder.isEmpty)
+            XCTAssertFalse(backend.quotaNote.isEmpty)
+        }
+        XCTAssertEqual(SearchBackend.tavily.keyURL?.host, "tavily.com")
+        XCTAssertEqual(SearchBackend.deepseek.keyURL?.host, "platform.deepseek.com")
     }
 
     // MARK: - 工具定义

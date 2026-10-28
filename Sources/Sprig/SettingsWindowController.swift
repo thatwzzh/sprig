@@ -23,9 +23,10 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
     private let syncFreeButton = PointerButton(title: "同步免费", target: nil, action: nil)
     private let keyHelpButton = PointerButton(title: "去获取", target: nil, action: nil)
     private let removeButton = PointerButton(title: "－", target: nil, action: nil)
-    private let webSearchToggle = NSButton(checkboxWithTitle: "让模型自己联网搜索（Tavily）",
+    private let webSearchToggle = NSButton(checkboxWithTitle: "让模型自己联网搜索",
                                            target: nil,
                                            action: nil)
+    private let searchBackendPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private let webSearchKeyField = NSSecureTextField(string: "")
     private let webSearchHelpButton = PointerButton(title: "去获取", target: nil, action: nil)
 
@@ -206,20 +207,28 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         webSearchToggle.state = Settings.webSearchEnabled ? .on : .off
         contentView.addSubview(webSearchToggle)
 
-        webSearchKeyField.placeholderString = "Tavily API Key（tvly-…）"
+        searchBackendPopUp.frame = NSRect(x: 24, y: 110, width: 110, height: 24)
+        searchBackendPopUp.controlSize = .small
+        searchBackendPopUp.font = .systemFont(ofSize: 12)
+        searchBackendPopUp.target = self
+        searchBackendPopUp.action = #selector(searchBackendChanged)
+        contentView.addSubview(searchBackendPopUp)
+        reloadSearchBackendPopUp()
+
+        webSearchKeyField.placeholderString = Settings.searchBackend.keyPlaceholder
         webSearchKeyField.font = .systemFont(ofSize: 12)
         webSearchKeyField.delegate = self
         webSearchKeyField.stringValue = Settings.webSearchAPIKey
-        webSearchKeyField.frame = NSRect(x: 24, y: 110, width: 376, height: 24)
+        webSearchKeyField.frame = NSRect(x: 140, y: 110, width: 260, height: 24)
         contentView.addSubview(webSearchKeyField)
 
         webSearchHelpButton.target = self
-        webSearchHelpButton.action = #selector(openTavily)
+        webSearchHelpButton.action = #selector(openSearchKeyPage)
         webSearchHelpButton.bezelStyle = .rounded
         webSearchHelpButton.controlSize = .small
         webSearchHelpButton.font = .systemFont(ofSize: 12)
         webSearchHelpButton.frame = NSRect(x: 406, y: 109, width: 70, height: 26)
-        webSearchHelpButton.toolTip = "在 tavily.com 注册后免费领一个 Key（1000 次/月）"
+        webSearchHelpButton.toolTip = searchHelpTooltip()
         contentView.addSubview(webSearchHelpButton)
 
         let hint = NSTextField(wrappingLabelWithString:
@@ -227,7 +236,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
             + "「OpenAI 兼容」适用于 OpenAI / DeepSeek / Groq / 智谱 / 火山 / 百炼 等，"
             + "Base URL 填到 /v1 或只填域名都行。\n"
             + "免费模型（OpenRouter 19 个）由 app 自动导入并每天更新。\n"
-            + "联网搜索用 Tavily，免费 1000 次/月；开着时模型可能为一次提问连搜多轮。")
+            + "联网搜索可切 Tavily（1000 次/月免费）或 DeepSeek（5 元/1000 次，中文更强）。")
         hint.font = .systemFont(ofSize: 11)
         hint.textColor = .secondaryLabelColor
         hint.frame = NSRect(x: 24, y: 12, width: 452, height: 88)
@@ -561,15 +570,40 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
     @objc private func webSearchToggled() {
         Settings.webSearchEnabled = webSearchToggle.state == .on
         if Settings.webSearchEnabled && Settings.webSearchAPIKey.isEmpty {
-            statusLabel.stringValue = "还需填 Tavily Key"
+            statusLabel.stringValue = "还需填 \(Settings.searchBackend.title) Key"
         } else {
             statusLabel.stringValue = ""
         }
     }
 
-    @objc private func openTavily() {
-        guard let url = URL(string: "https://tavily.com/") else { return }
+    @objc private func openSearchKeyPage() {
+        guard let url = Settings.searchBackend.keyURL else { return }
         NSWorkspace.shared.open(url)
+    }
+
+    @objc private func searchBackendChanged() {
+        guard let title = searchBackendPopUp.titleOfSelectedItem,
+              let backend = SearchBackend.allCases.first(where: { $0.title == title }) else { return }
+        Settings.searchBackend = backend
+        // 换后端：Key 内容、占位提示、引导链接都要跟着换，否则会拿 A 家的 Key 去调 B 家
+        webSearchKeyField.stringValue = Settings.webSearchAPIKey
+        webSearchKeyField.placeholderString = backend.keyPlaceholder
+        webSearchHelpButton.toolTip = searchHelpTooltip()
+        statusLabel.stringValue = backend.quotaNote
+    }
+
+    private func reloadSearchBackendPopUp() {
+        searchBackendPopUp.removeAllItems()
+        for backend in SearchBackend.allCases {
+            searchBackendPopUp.addItem(withTitle: backend.title)
+        }
+        searchBackendPopUp.selectItem(withTitle: Settings.searchBackend.title)
+    }
+
+    private func searchHelpTooltip() -> String {
+        let backend = Settings.searchBackend
+        let host = backend.keyURL?.host ?? backend.title
+        return "\(backend.quotaNote)；在 \(host) 领 Key"
     }
 
     func present() {
@@ -612,6 +646,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         print("keyHelp.button     =", keyHelpButton.isHidden ? "隐藏" : "显示")
         print("keyHelp.tooltip    =", keyHelpButton.toolTip ?? "")
         print("webSearch.enabled  =", Settings.webSearchEnabled)
+        print("webSearch.backend  =", Settings.searchBackend.title)
         print("webSearch.hasKey   =", Settings.webSearchAPIKey.isEmpty ? "否" : "是")
         print("webSearch.ready    =", Settings.webSearchReady)
         print("status             =", statusLabel.stringValue)

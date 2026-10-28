@@ -98,7 +98,11 @@ enum Settings {
     // MARK: - 联网搜索
 
     private static let webSearchEnabledKey = "webSearchEnabled"
-    private static let webSearchAPIKeyKey = "webSearchAPIKey"
+    private static let searchBackendKey = "searchBackend"
+    private static let tavilyAPIKeyKey = "tavilyAPIKey"
+    private static let deepseekSearchKeyKey = "deepseekSearchAPIKey"
+    /// 早期只有一个搜索 Key，切后端时留作兼容
+    private static let legacyWebSearchKey = "webSearchAPIKey"
 
     /// 是否让模型自己决定要不要联网搜。默认关——开着会花搜索额度。
     static var webSearchEnabled: Bool {
@@ -109,15 +113,46 @@ enum Settings {
         }
     }
 
-    /// Tavily 的 API Key（1000 次/月免费）
-    static var webSearchAPIKey: String {
-        get { UserDefaults.standard.string(forKey: webSearchAPIKeyKey) ?? "" }
-        set { UserDefaults.standard.set(newValue, forKey: webSearchAPIKeyKey) }
+    static var searchBackend: SearchBackend {
+        get {
+            guard let raw = UserDefaults.standard.string(forKey: searchBackendKey),
+                  let backend = SearchBackend(rawValue: raw) else { return .tavily }
+            return backend
+        }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: searchBackendKey)
+            NotificationCenter.default.post(name: .sprigProvidersDidChange, object: nil)
+        }
     }
 
-    /// 真正可用的条件：开关打开 + 有 Key
+    /// 当前后端对应的 Key。两个后端各存一份，切来切去不会互相覆盖。
+    static var webSearchAPIKey: String {
+        get {
+            switch searchBackend {
+            case .tavily:
+                // 旧版本只有一个搜索 Key，第一次读时接过来
+                if let value = UserDefaults.standard.string(forKey: tavilyAPIKeyKey) {
+                    return value
+                }
+                return UserDefaults.standard.string(forKey: legacyWebSearchKey) ?? ""
+            case .deepseek:
+                return UserDefaults.standard.string(forKey: deepseekSearchKeyKey) ?? ""
+            }
+        }
+        set {
+            switch searchBackend {
+            case .tavily:
+                UserDefaults.standard.set(newValue, forKey: tavilyAPIKeyKey)
+            case .deepseek:
+                UserDefaults.standard.set(newValue, forKey: deepseekSearchKeyKey)
+            }
+        }
+    }
+
+    /// 真正可用的条件：开关打开 + 当前后端有 Key
     static var webSearchReady: Bool {
-        webSearchEnabled && !webSearchAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        webSearchEnabled
+            && !webSearchAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     // MARK: - 免费模型（OpenRouter）
