@@ -39,11 +39,39 @@ public enum SearchBackend: String, Codable, Sendable, CaseIterable {
     }
 }
 
+/// 一条搜索结果。模型看摘要，用户看标题和链接。
+public struct SearchItem: Sendable, Equatable {
+    public let title: String
+    public let url: String
+    public let summary: String
+
+    public init(title: String, url: String, summary: String) {
+        self.title = title
+        self.url = url
+        self.summary = summary
+    }
+
+    public var host: String? {
+        URL(string: url)?.host
+    }
+}
+
+/// 一次搜索的结果：`modelText` 回填给模型，`items` 用于在面板上展示来源。
+public struct SearchReport: Sendable {
+    public let modelText: String
+    public let items: [SearchItem]
+
+    public init(modelText: String, items: [SearchItem]) {
+        self.modelText = modelText
+        self.items = items
+    }
+}
+
 /// 联网搜索工具。
 ///
 /// 两个后端返回同样格式的文本，模型侧行为一致：标题、来源、摘要逐条列出。
 /// 摘要截到 600 字——5 条约 3000 字，再多会把卡片上下文挤掉
-/// （`ContextAssembler` 的预算不含搜索结果）。
+/// （`ContextAssembler` 的 `toolReserve` 会先扣掉这部分）。
 public enum WebSearchTool {
     public static let name = "web_search"
 
@@ -70,11 +98,11 @@ public enum WebSearchTool {
         )
     }
 
-    /// 执行一次搜索，返回给模型看的纯文本。
+    /// 执行一次搜索。
     public static func execute(argumentsJSON: String,
                                backend: SearchBackend,
                                apiKey: String,
-                               session: URLSession = .shared) async throws -> String {
+                               session: URLSession = .shared) async throws -> SearchReport {
         let query = try parseQuery(argumentsJSON)
         let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else {
@@ -110,7 +138,7 @@ public enum WebSearchTool {
 
     private static func searchTavily(query: String,
                                      apiKey: String,
-                                     session: URLSession) async throws -> String {
+                                     session: URLSession) async throws -> SearchReport {
         var request = URLRequest(url: URL(string: "https://api.tavily.com/search")!)
         request.httpMethod = "POST"
         request.timeoutInterval = 20
@@ -130,34 +158,26 @@ public enum WebSearchTool {
         return formatTavily(payload: data, query: query)
     }
 
-    /// 拼成模型好读的文本。每条摘要截到 600 字。
-    static func formatTavily(payload: Data, query: String) -> String {
+    static func formatTavily(payload: Data, query: String) -> SearchReport {
         guard let object = try? JSONSerialization.jsonObject(with: payload) as? [String: Any],
               let results = object["results"] as? [[String: Any]],
               !results.isEmpty else {
-            return "搜索「\(query)」没有找到结果。"
+            return emptyReport(query: query)
         }
 
-        var lines = ["搜索「\(query)」的结果："]
-        for (index, item) in results.prefix(5).enumerated() {
-            let title = (item["title"] as? String)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? "（无标题）"
-            let url = item["url"] as? String ?? ""
-            let content = truncate(item["content"] as? String)
-
-            lines.append("")
-            lines.append("[\(index + 1)] \(title)")
-            if !url.isEmpty { lines.append("来源：\(url)") }
-            if let content { lines.append(content) }
+        let items = results.prefix(5).map { item -> SearchItem in
+            SearchItem(title: nonEmpty(item["title"] as? String) ?? "（无标题）",
+                       url: nonEmpty(item["url"] as? String) ?? "",
+                       summary: truncate(item["content"] as? String) ?? "")
         }
-        return lines.joined(separator: "\n")
+        return report(from: Array(items), query: query)
     }
 
     // MARK: - DeepSeek
 
     private static func searchDeepSeek(query: String,
                                        apiKey: String,
-                                       session: URLSession) async throws -> String {
+                                       session: URLSession) async throws -> SearchReport {
         var request = URLRequest(url: URL(string: "https://api.deepseek.com/v1/tools/search")!)
         request.httpMethod = "POST"
         request.timeoutInterval = 20
@@ -178,10 +198,10 @@ public enum WebSearchTool {
 
     /// DeepSeek 的响应带两个质量信号：`rerank_score` 0~3（≥1.5 算高质量）、
     /// `authority` 0~4（≥3 是高权威）。优先留高质量的，一条都没有就按原顺序全留。
-    static func formatDeepSeek(payload: Data, query: String) -> String {
+    static func formatDeepSeek(payload: Data, query: String) -> SearchReport {
         guard let parsed = try? JSONDecoder().decode(DeepSeekPayload.self, from: payload),
               !parsed.results.isEmpty else {
-            return "搜索「\(query)」没有找到结果。"
+            return emptyReport(query: query)
         }
 
         let scored = parsed.results.map { ($0, $0.rerankScore ?? 0) }
@@ -190,19 +210,15 @@ public enum WebSearchTool {
             .sorted { $0.1 > $1.1 }
             .prefix(5))
 
-        var lines = ["搜索「\(query)」的结果："]
-        for (index, pair) in pool.enumerated() {
+        let items = pool.map { pair -> SearchItem in
             let item = pair.0
-            let title = nonEmpty(item.title) ?? "（无标题）"
-            // summary 是 600–800 字、留给模型读的；snippet 只有 100–200 字，作退路
-            let body = truncate(item.summary) ?? truncate(item.snippet) ?? ""
-
-            lines.append("")
-            lines.append("[\(index + 1)] \(title)")
-            if let url = nonEmpty(item.url) { lines.append("来源：\(url)") }
-            if !body.isEmpty { lines.append(body) }
+            return SearchItem(
+                title: nonEmpty(item.title) ?? "（无标题）",
+                url: nonEmpty(item.url) ?? "",
+                // summary 是 600–800 字、留给模型读的；snippet 只有 100–200 字，作退路
+                summary: truncate(item.summary) ?? truncate(item.snippet) ?? "")
         }
-        return lines.joined(separator: "\n")
+        return report(from: items, query: query)
     }
 
     private struct DeepSeekPayload: Decodable {
@@ -223,6 +239,24 @@ public enum WebSearchTool {
     }
 
     // MARK: - 公共
+
+    /// 两个后端统一成一样的文本，模型侧不用区分来源
+    static func report(from items: [SearchItem], query: String) -> SearchReport {
+        guard !items.isEmpty else { return emptyReport(query: query) }
+
+        var lines = ["搜索「\(query)」的结果："]
+        for (index, item) in items.enumerated() {
+            lines.append("")
+            lines.append("[\(index + 1)] \(item.title)")
+            if !item.url.isEmpty { lines.append("来源：\(item.url)") }
+            if !item.summary.isEmpty { lines.append(item.summary) }
+        }
+        return SearchReport(modelText: lines.joined(separator: "\n"), items: items)
+    }
+
+    private static func emptyReport(query: String) -> SearchReport {
+        SearchReport(modelText: "搜索「\(query)」没有找到结果。", items: [])
+    }
 
     private static func send(_ request: URLRequest,
                              session: URLSession,

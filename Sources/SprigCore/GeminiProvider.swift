@@ -11,6 +11,8 @@ public struct GeminiProvider: LLMProvider {
     public var apiKey: String
     public var model: String
     public var temperature: Double
+    /// 关掉思考链。只对 flash 系加：pro 的 thinkingBudget 最少 128，传 0 会 400。
+    public var disableThinking: Bool
 
     private let session: URLSession
 
@@ -19,13 +21,15 @@ public struct GeminiProvider: LLMProvider {
                 baseURL: URL = URL(string: "https://generativelanguage.googleapis.com")!,
                 apiKey: String,
                 model: String = "gemini-2.5-flash",
-                temperature: Double = 0.3) {
+                temperature: Double = 0.3,
+                disableThinking: Bool = false) {
         self.id = id
         self.displayName = displayName
         self.baseURL = baseURL
         self.apiKey = apiKey
         self.model = model
         self.temperature = temperature
+        self.disableThinking = disableThinking
         // 复用全局 session：每次新建会重做 TLS 握手，首字延迟明显变长
         self.session = HTTPClient.streaming
     }
@@ -79,7 +83,7 @@ public struct GeminiProvider: LLMProvider {
                     }
                     continuation.finish()
                 } catch {
-                    continuation.finish(throwing: error)
+                    continuation.finish(throwing: LLMError.wrapping(error))
                 }
             }
             continuation.onTermination = { _ in task.cancel() }
@@ -114,12 +118,18 @@ public struct GeminiProvider: LLMProvider {
             }
         }
 
+        var generationConfig: [String: Any] = [
+            "temperature": temperature,
+            "maxOutputTokens": 2048,
+        ]
+        // 知识问答要的是快和直接，默认不思考。pro 系不支持 0，只对 flash 加。
+        if disableThinking, model.lowercased().contains("flash") {
+            generationConfig["thinkingConfig"] = ["thinkingBudget": 0]
+        }
+
         var body: [String: Any] = [
             "contents": contents,
-            "generationConfig": [
-                "temperature": temperature,
-                "maxOutputTokens": 2048,
-            ],
+            "generationConfig": generationConfig,
         ]
         if let systemText, !systemText.isEmpty {
             body["systemInstruction"] = ["parts": [["text": systemText]]]

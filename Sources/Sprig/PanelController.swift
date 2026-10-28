@@ -743,17 +743,17 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
                         } else {
                             query = String(call.arguments.prefix(40))
                         }
-                        // 把搜索动作写进答案，用户才知道这些内容是哪来的
-                        self.consume("\n\n🔍 搜索「\(query)」\n\n")
 
                         do {
-                            let result = try await WebSearchTool.execute(argumentsJSON: call.arguments,
+                            let report = try await WebSearchTool.execute(argumentsJSON: call.arguments,
                                                                          backend: searchBackend,
                                                                          apiKey: searchKey)
-                            conversation.append(.toolResult(result, for: call.id))
+                            conversation.append(.toolResult(report.modelText, for: call.id))
+                            self.showSearchResults(report, query: query)
                         } catch {
-                            conversation.append(.toolResult("搜索失败：\(error.localizedDescription)",
-                                                            for: call.id))
+                            let reason = LLMError.wrapping(error).localizedDescription
+                            conversation.append(.toolResult("搜索失败：\(reason)", for: call.id))
+                            self.consume("\n\n🔍 搜索「\(query)」失败：\(reason)\n\n")
                         }
                     }
                 }
@@ -797,12 +797,51 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         answerView.scrollToBottom()
     }
 
+    /// 搜索结果展示成「标题 + 域名」，标题可点。纯文本同时写进 raw，重开卡片还在。
+    private func showSearchResults(_ report: SearchReport, query: String) {
+        guard !stack.isEmpty else { return }
+        let shown = Array(report.items.prefix(3))
+
+        var plain = "\n\n🔍 搜索「\(query)」"
+        for item in shown {
+            plain += "\n · \(item.title)"
+            if let host = item.host { plain += "  \(host)" }
+        }
+        if shown.isEmpty { plain += "（没有找到结果）" }
+        plain += "\n\n"
+        stack[stack.count - 1].raw += plain
+
+        answerView.append("\n\n🔍 搜索「\(query)」", term: nil)
+        if shown.isEmpty {
+            answerView.append("（没有找到结果）", term: nil)
+        } else {
+            answerView.appendSearchItems(shown)
+        }
+        answerView.append("\n\n", term: nil)
+
+        answerHeight = measuredAnswerHeight()
+        applyHeights(animated: false)
+        answerView.scrollToBottom()
+    }
+
     private func finishStreaming() {
         isStreaming = false
         let tail = parser.flush()
         if !tail.isEmpty {
             pendingSegments.append(contentsOf: tail)
             flushPendingSegments()
+        }
+        // 请求成功但一个字都没吐：模型名写错、额度耗尽、内容被过滤都会这样。
+        // 不提示的话用户只能盯着空白面板猜。
+        if let raw = stack.last?.raw,
+           raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let hint = "\n\n⚠️ 模型没有返回任何内容。"
+                + "常见原因：模型名写错、这个模型的额度用完了，或内容被服务端过滤。"
+            apply(.text(hint))
+            if !stack.isEmpty { stack[stack.count - 1].raw += hint }
+            answerHeight = measuredAnswerHeight()
+            applyHeights(animated: true)
+            answerView.scrollToBottom()
         }
         persistCurrentCard()
         updateSelectionBar()
@@ -1083,12 +1122,19 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         } else {
             url = nil
         }
-        guard let url, let term = AnswerTextView.term(from: url) else { return false }
-        guard let parent = stack.last?.card else { return false }
-        createChildCard(parentID: parent.id,
-                        selection: term,
-                        title: shortTitle(term),
-                        question: "")
+        guard let url else { return false }
+
+        if let term = AnswerTextView.term(from: url) {
+            guard let parent = stack.last?.card else { return false }
+            createChildCard(parentID: parent.id,
+                            selection: term,
+                            title: shortTitle(term),
+                            question: "")
+            return true
+        }
+
+        // 搜索来源这类普通链接：交给系统用默认浏览器打开
+        NSWorkspace.shared.open(url)
         return true
     }
 

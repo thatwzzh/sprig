@@ -26,6 +26,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
     private let webSearchToggle = NSButton(checkboxWithTitle: "让模型自己联网搜索",
                                            target: nil,
                                            action: nil)
+    private let thinkingToggle = NSButton(checkboxWithTitle: "关闭思考链", target: nil, action: nil)
     private let searchBackendPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private let webSearchKeyField = NSSecureTextField(string: "")
     private let webSearchHelpButton = PointerButton(title: "去获取", target: nil, action: nil)
@@ -203,9 +204,17 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         webSearchToggle.target = self
         webSearchToggle.action = #selector(webSearchToggled)
         webSearchToggle.font = .systemFont(ofSize: 12)
-        webSearchToggle.frame = NSRect(x: 22, y: 140, width: 320, height: 20)
+        webSearchToggle.frame = NSRect(x: 22, y: 140, width: 200, height: 20)
         webSearchToggle.state = Settings.webSearchEnabled ? .on : .off
         contentView.addSubview(webSearchToggle)
+
+        thinkingToggle.target = self
+        thinkingToggle.action = #selector(thinkingToggled)
+        thinkingToggle.font = .systemFont(ofSize: 12)
+        thinkingToggle.frame = NSRect(x: 236, y: 140, width: 120, height: 20)
+        thinkingToggle.state = Settings.disableThinking ? .on : .off
+        thinkingToggle.toolTip = "推理模型会先输出思考过程。知识问答用不上，关掉更快、更省 token。"
+        contentView.addSubview(thinkingToggle)
 
         searchBackendPopUp.frame = NSRect(x: 24, y: 110, width: 110, height: 24)
         searchBackendPopUp.controlSize = .small
@@ -576,6 +585,10 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         }
     }
 
+    @objc private func thinkingToggled() {
+        Settings.disableThinking = thinkingToggle.state == .on
+    }
+
     @objc private func openSearchKeyPage() {
         guard let url = Settings.searchBackend.keyURL else { return }
         NSWorkspace.shared.open(url)
@@ -645,6 +658,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         print("remove.enabled     =", removeButton.isEnabled)
         print("keyHelp.button     =", keyHelpButton.isHidden ? "隐藏" : "显示")
         print("keyHelp.tooltip    =", keyHelpButton.toolTip ?? "")
+        print("thinking.disabled  =", Settings.disableThinking)
         print("webSearch.enabled  =", Settings.webSearchEnabled)
         print("webSearch.backend  =", Settings.searchBackend.title)
         print("webSearch.hasKey   =", Settings.webSearchAPIKey.isEmpty ? "否" : "是")

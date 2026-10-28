@@ -9,6 +9,9 @@ public struct OpenAICompatibleProvider: LLMProvider {
     public var apiKey: String
     public var model: String
     public var temperature: Double
+    /// 关掉推理模型的思考链。只对 OpenRouter 生效——别的网关不认这个字段，
+    /// 乱发可能直接 400。
+    public var disableThinking: Bool
 
     private let session: URLSession
 
@@ -17,13 +20,15 @@ public struct OpenAICompatibleProvider: LLMProvider {
                 baseURL: URL,
                 apiKey: String,
                 model: String,
-                temperature: Double = 0.3) {
+                temperature: Double = 0.3,
+                disableThinking: Bool = false) {
         self.id = id
         self.displayName = displayName
         self.baseURL = baseURL
         self.apiKey = apiKey
         self.model = model
         self.temperature = temperature
+        self.disableThinking = disableThinking
         // 复用全局 session：每次新建会重做 TLS 握手，首字延迟明显变长
         self.session = HTTPClient.streaming
     }
@@ -71,7 +76,7 @@ public struct OpenAICompatibleProvider: LLMProvider {
                     }
                     continuation.finish()
                 } catch {
-                    continuation.finish(throwing: error)
+                    continuation.finish(throwing: LLMError.wrapping(error))
                 }
             }
             continuation.onTermination = { _ in task.cancel() }
@@ -93,7 +98,7 @@ public struct OpenAICompatibleProvider: LLMProvider {
                         }
                         continuation.finish()
                     } catch {
-                        continuation.finish(throwing: error)
+                        continuation.finish(throwing: LLMError.wrapping(error))
                     }
                 }
                 continuation.onTermination = { _ in task.cancel() }
@@ -174,7 +179,7 @@ public struct OpenAICompatibleProvider: LLMProvider {
                     }
                     continuation.finish()
                 } catch {
-                    continuation.finish(throwing: error)
+                    continuation.finish(throwing: LLMError.wrapping(error))
                 }
             }
             continuation.onTermination = { _ in task.cancel() }
@@ -215,6 +220,11 @@ public struct OpenAICompatibleProvider: LLMProvider {
                 ]
             }
             body["tool_choice"] = "auto"
+        }
+
+        // OpenRouter 认这个写法；别的网关不认，发了可能 400，所以按 baseURL 判断
+        if disableThinking, baseURL.host?.contains("openrouter") == true {
+            body["reasoning"] = ["effort": "none"]
         }
 
         request.httpBody = try JSONSerialization.data(withJSONObject: body)

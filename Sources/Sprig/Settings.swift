@@ -109,7 +109,22 @@ enum Settings {
     }()
 
     static var provider: LLMProvider {
-        activeConfig.makeProvider()
+        activeConfig.makeProvider(disableThinking: disableThinking)
+    }
+
+    private static let disableThinkingKey = "disableThinking"
+
+    /// 默认关闭推理模型的思考链——知识问答要的是快和直接，思考过程既慢又没用。
+    /// 用 object(forKey:) 判存在，因为「没存过」要当作 true，而 bool(forKey:) 会返回 false。
+    static var disableThinking: Bool {
+        get {
+            guard UserDefaults.standard.object(forKey: disableThinkingKey) != nil else { return true }
+            return UserDefaults.standard.bool(forKey: disableThinkingKey)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: disableThinkingKey)
+            NotificationCenter.default.post(name: .sprigProvidersDidChange, object: nil)
+        }
     }
 
     static func selectProvider(id: UUID) {

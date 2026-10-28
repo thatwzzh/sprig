@@ -39,17 +39,71 @@ public enum LLMError: LocalizedError, Sendable {
     case http(status: Int, body: String)
     case server(String)
     case decode(String)
+    /// 网络层问题（断网、超时、连不上主机）
+    case network(String)
+    /// 请求成功但一个字都没吐出来
+    case emptyResponse
 
     public var errorDescription: String? {
         switch self {
-        case .badURL(let s):
-            return "地址无效：\(s)"
+        case .badURL(let value):
+            return "地址无效：\(value)"
         case .http(let status, let body):
-            return "请求失败（HTTP \(status)）：\(body.prefix(300))"
-        case .server(let msg):
-            return "服务端返回错误：\(msg)"
+            return Self.httpMessage(status: status, body: body)
+        case .server(let message):
+            return "服务端返回错误：\(message)"
         case .decode(let raw):
             return "响应无法解析：\(raw.prefix(200))"
+        case .network(let message):
+            return message
+        case .emptyResponse:
+            return "模型没有返回任何内容。"
+        }
+    }
+
+    /// HTTP 状态码翻成「按这个改」的话，而不是甩一串英文原文
+    private static func httpMessage(status: Int, body: String) -> String {
+        switch status {
+        case 400:
+            return "请求被拒绝（HTTP 400）：多半是模型名不对，或该模型不支持这次请求带的参数。"
+        case 401, 403:
+            return "鉴权失败（HTTP \(status)）：API Key 无效，或这条 Key 没有该模型的权限。"
+        case 404:
+            return "接口地址不对（HTTP 404）：检查 Base URL 是否该以 /v1 结尾。"
+        case 429:
+            return "被限流了（HTTP 429）：免费层有每分钟次数限制，等一分钟再问。"
+        case 500...599:
+            return "对方服务器出错（HTTP \(status)）：不是本机的问题，稍后重试。"
+        default:
+            let tail = body.trimmingCharacters(in: .whitespacesAndNewlines)
+            return "请求失败（HTTP \(status)）\(tail.isEmpty ? "" : "：\(tail.prefix(160))")"
+        }
+    }
+
+    /// 把 URLSession 的错误翻译成能照着做的中文。
+    /// 直接透 `localizedDescription` 会得到 "The Internet connection appears to be offline."，
+    /// 对用户没有任何指导意义。
+    public static func wrapping(_ error: Error) -> LLMError {
+        if let llm = error as? LLMError { return llm }
+
+        guard let urlError = error as? URLError else {
+            return .server(error.localizedDescription)
+        }
+        switch urlError.code {
+        case .notConnectedToInternet:
+            return .network("设备没有联网，检查 Wi-Fi 或网线。")
+        case .timedOut:
+            return .network("请求超时：模型可能太慢，或网络不稳定。")
+        case .cannotFindHost, .dnsLookupFailed:
+            return .network("域名解析失败：Base URL 里的主机名可能写错了。")
+        case .cannotConnectToHost, .networkConnectionLost:
+            return .network("连不上服务器：检查 Base URL 和端口；本地模型先确认已启动。")
+        case .secureConnectionFailed, .serverCertificateUntrusted:
+            return .network("TLS 握手失败：证书有问题，或中间有代理在拦截。")
+        case .cancelled:
+            return .network("请求已取消。")
+        default:
+            return .network("网络错误：\(urlError.localizedDescription)")
         }
     }
 }

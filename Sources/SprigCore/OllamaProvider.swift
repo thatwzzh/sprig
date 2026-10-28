@@ -61,7 +61,7 @@ public struct OllamaProvider: LLMProvider {
                     }
                     continuation.finish()
                 } catch {
-                    continuation.finish(throwing: error)
+                    continuation.finish(throwing: LLMError.wrapping(error))
                 }
             }
             continuation.onTermination = { _ in task.cancel() }

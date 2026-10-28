@@ -116,7 +116,8 @@ public struct ProviderConfig: Codable, Identifiable, Sendable, Equatable {
         return !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    public func makeProvider(temperature: Double = 0.3) -> LLMProvider {
+    public func makeProvider(temperature: Double = 0.3,
+                             disableThinking: Bool = false) -> LLMProvider {
         let rawBase = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         let url = URL(string: rawBase) ?? URL(string: kind.defaultBaseURL)!
         let trimmedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -135,14 +136,16 @@ public struct ProviderConfig: Codable, Identifiable, Sendable, Equatable {
                                             baseURL: url,
                                             apiKey: key,
                                             model: trimmedModel.isEmpty ? kind.defaultModel : trimmedModel,
-                                            temperature: temperature)
+                                            temperature: temperature,
+                                            disableThinking: disableThinking)
         case .gemini:
             return GeminiProvider(id: id.uuidString,
                                   displayName: displayName,
                                   baseURL: url,
                                   apiKey: key,
                                   model: trimmedModel.isEmpty ? kind.defaultModel : trimmedModel,
-                                  temperature: temperature)
+                                  temperature: temperature,
+                                  disableThinking: disableThinking)
         }
     }
 }
