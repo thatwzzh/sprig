@@ -471,6 +471,8 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
             let path = await CardStore.shared.path(to: card.id)
             guard !path.isEmpty else { return }
             self.stack = path.map { Node(card: $0, raw: $0.answer, scroll: 0) }
+            // 这张卡可能还在后台生成：把已累积的内容先铺上，并接管后续流式
+            self.adoptBackgroundIfNeeded(card.id)
             self.renderCurrent()
             self.content.tree.select(id: card.id)
         }
@@ -883,6 +885,34 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         scheduleFlush()
     }
 
+    /// 切回一张仍在后台生成的卡：把累积内容铺到节点上，并把后续 chunk 接回前台渲染。
+    ///
+    /// 之前不做这一步，切回来看到的是卡片里存的旧内容（可能是空的），
+    /// 要一直等到整个请求结束才由 finish(owner:) 补全。
+    private func adoptBackgroundIfNeeded(_ cardID: UUID) {
+        guard let buffered = backgroundRaw[cardID] else { return }
+        backgroundRaw[cardID] = nil
+
+        guard !stack.isEmpty else { return }
+        stack[stack.count - 1].raw = buffered
+        stack[stack.count - 1].card.answer = buffered
+
+        // 重建流式解析状态：让 parser 把已有内容"吞掉"但不产出，
+        // 后续 chunk 才会只吐出增量部分。渲染用的是另一套 replay 实例，互不干扰。
+        parser = TermParser()
+        _ = parser.consume(buffered)
+        pendingSegments.removeAll()
+        flushScheduled = false
+
+        // 已有术语也要记进 seenTerms，否则同一术语的下划线会再出现一遍
+        var scan = TermParser()
+        for segment in scan.consume(buffered) + scan.flush() {
+            if case .term(let term) = segment { seenTerms.insert(term) }
+        }
+
+        isStreaming = true
+    }
+
     /// 把当前流式任务转到后台：不取消，只是不再往面板渲染。
     /// 任务跑完时会调用 finish(owner:)，把完整答案写进那张卡。
     private func detachCurrentStreaming() {
@@ -1160,6 +1190,8 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         detachCurrentStreaming()
         stack[stack.count - 1].scroll = currentScroll()
         stack.removeSubrange((index + 1)...)
+        // 回退到的那张可能还在后台生成
+        if let id = stack.last?.card.id { adoptBackgroundIfNeeded(id) }
         renderCurrent()
         content.tree.select(id: stack.last?.card.id)
     }
