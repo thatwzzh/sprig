@@ -122,7 +122,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         zhipuHelp.controlSize = .small
         zhipuHelp.font = .systemFont(ofSize: 12)
         zhipuHelp.frame = NSRect(x: 406, y: 539, width: 70, height: 26)
-        zhipuHelp.toolTip = "在 open.bigmodel.cn 注册，手机号即可，GLM-4.7-Flash 免费不限量"
+        zhipuHelp.toolTip = "bigmodel.cn 注册 + 实名认证后创建 Key；GLM-4.7-Flash 免费不限量，不用买套餐"
         contentView.addSubview(zhipuHelp)
 
         let orLabel = NSTextField(labelWithString: "OpenRouter")
@@ -472,7 +472,9 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
     }
 
     @objc private func openZhipuKeyPage() {
-        guard let url = URL(string: "https://open.bigmodel.cn/usercenter/apikeys") else { return }
+        // 官方文档（docs.bigmodel.cn/cn/guide/develop）给的是这个路径，
+        // 旧的 open.bigmodel.cn/usercenter/apikeys 在 SPA 路由里会 404
+        guard let url = URL(string: "https://bigmodel.cn/usercenter/proj-mgmt/apikeys") else { return }
         NSWorkspace.shared.open(url)
     }
 
