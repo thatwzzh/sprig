@@ -440,37 +440,75 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
 
         Task { @MainActor in
             let base = URL(string: config.baseURL) ?? URL(string: config.kind.defaultBaseURL)!
-            let models: [String]
+            let options: [ModelOption]
             switch config.kind {
             case .ollama:
-                models = await OllamaProvider.availableModels(baseURL: base)
+                options = await OllamaProvider.availableModels(baseURL: base)
+                    .map { ModelOption(id: $0, isFree: false) }
             case .gemini:
-                models = await GeminiProvider.availableModels(apiKey: config.apiKey)
+                options = await GeminiProvider.availableModels(apiKey: config.apiKey)
+                    .map { ModelOption(id: $0, isFree: false) }
             case .openAICompatible:
-                models = await OpenAICompatibleProvider.availableModels(baseURL: base, apiKey: config.apiKey)
+                options = await OpenAICompatibleProvider.modelOptions(baseURL: base, apiKey: config.apiKey)
             }
 
             fetchButton.isEnabled = true
-            guard !models.isEmpty else {
+            guard !options.isEmpty else {
                 statusLabel.stringValue = "没拉到模型，检查地址 / Key"
                 return
             }
-            statusLabel.stringValue = "\(models.count) 个可用模型"
-            presentModelMenu(models)
+            let freeCount = options.filter(\.isFree).count
+            statusLabel.stringValue = freeCount > 0
+                ? "\(options.count) 个模型，\(freeCount) 个免费"
+                : "\(options.count) 个可用模型"
+            presentModelMenu(options)
         }
     }
 
-    private func presentModelMenu(_ models: [String]) {
+    private func presentModelMenu(_ options: [ModelOption]) {
         let menu = NSMenu()
         menu.autoenablesItems = false
-        // 免费层模型多，菜单太长反而难找，前 40 个足够
-        for name in models.prefix(40) {
-            let item = NSMenuItem(title: name, action: #selector(pickModel(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = name
-            menu.addItem(item)
+
+        // 价格 0 但根本不是对话模型的（音乐生成、内容审核）也剔掉
+        let displayable = options.filter { !FreeModelCatalog.isNonChatModel($0.id) }
+        let free = displayable.filter(\.isFree)
+        let paid = displayable.filter { !$0.isFree }
+
+        if free.isEmpty {
+            // Ollama / Gemini / OpenAI 官方接口都不带价格，平铺即可
+            for option in displayable.prefix(40) {
+                menu.addItem(modelItem(option.id, value: option.id))
+            }
+        } else {
+            // 之前一律按字母序取前 40 个，结果全是 aion-labs / anthropic 这些付费模型，
+            // 免费的 google/* 根本排不进来——用户以为「拉取」拉回来的是免费模型
+            menu.addItem(sectionHeader("免费（\(free.count) 个，不计费）"))
+            for option in free {
+                menu.addItem(modelItem(option.id + "  ·  免费", value: option.id))
+            }
+            if !paid.isEmpty {
+                menu.addItem(.separator())
+                menu.addItem(sectionHeader("付费（\(paid.count) 个，选中会计费）"))
+                for option in paid.prefix(30) {
+                    menu.addItem(modelItem(option.id, value: option.id))
+                }
+            }
         }
+
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: fetchButton.bounds.height), in: fetchButton)
+    }
+
+    private func modelItem(_ title: String, value: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: #selector(pickModel(_:)), keyEquivalent: "")
+        item.target = self
+        item.representedObject = value
+        return item
+    }
+
+    private func sectionHeader(_ title: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        return item
     }
 
     @objc private func pickModel(_ sender: NSMenuItem) {

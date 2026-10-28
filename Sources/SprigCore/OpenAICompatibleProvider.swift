@@ -277,7 +277,59 @@ public struct OpenAICompatibleProvider: LLMProvider {
     }
 }
 
+/// 一条可选的模型。`isFree` 只有 OpenRouter 这类带 pricing 字段的网关能判断出来。
+public struct ModelOption: Sendable, Equatable {
+    public let id: String
+    public let isFree: Bool
+
+    public init(id: String, isFree: Bool) {
+        self.id = id
+        self.isFree = isFree
+    }
+}
+
 public extension OpenAICompatibleProvider {
+    /// 拉模型列表并标出免费项。OpenRouter 的 `/v1/models` 带 pricing，
+    /// prompt 和 completion 都为 0 就是免费；OpenAI 官方接口没有 pricing，全是 false。
+    static func modelOptions(baseURL: URL, apiKey: String) async -> [ModelOption] {
+        var path = baseURL.path
+        while path.hasSuffix("/") { path.removeLast() }
+        var url = baseURL
+        if !path.hasSuffix("/v1") { url.appendPathComponent("v1") }
+        url.appendPathComponent("models")
+
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 10
+        let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !key.isEmpty {
+            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        }
+
+        do {
+            let (data, _) = try await HTTPClient.streaming.data(for: request)
+            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let items = object["data"] as? [[String: Any]] else { return [] }
+            return items.compactMap { item -> ModelOption? in
+                guard let id = item["id"] as? String else { return nil }
+                let pricing = item["pricing"] as? [String: Any]
+                let free = isZero(pricing?["prompt"]) && isZero(pricing?["completion"])
+                return ModelOption(id: id, isFree: free)
+            }
+            .sorted { $0.id < $1.id }
+        } catch {
+            return []
+        }
+    }
+
+    /// pricing 里的价格是字符串（"0" / "0.000001"），也见过数字类型
+    private static func isZero(_ raw: Any?) -> Bool {
+        switch raw {
+        case let string as String: return Double(string) == 0
+        case let number as NSNumber: return number.doubleValue == 0
+        default: return false
+        }
+    }
+
     /// 拉模型列表（GET /v1/models），用于设置页的「拉取」按钮。
     static func availableModels(baseURL: URL, apiKey: String) async -> [String] {
         var path = baseURL.path

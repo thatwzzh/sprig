@@ -80,21 +80,9 @@ public enum FreeModelCatalog {
     public static func preferred(from models: [FreeModel]) -> FreeModel? {
         guard !models.isEmpty else { return nil }
 
-        // 这些即便标着免费也不能当对话模型用
-        let excluded = [
-            "lyria",            // 音乐生成
-            "content-safety",   // 内容审核专用
-            "north-mini-code",  // 代码专用
-            "laguna",           // 代码专用
-            "lfm",              // 2.6B，容易不守输出格式
-            "embed",
-            "rerank",
-        ]
-
         let usable = models.filter { model in
             guard model.contextLength >= 32_000 else { return false }
-            let id = model.id.lowercased()
-            return !excluded.contains { id.contains($0) }
+            return !isNonChatModel(model.id)
         }
         guard !usable.isEmpty else { return models.first }
 
@@ -112,6 +100,23 @@ public enum FreeModelCatalog {
             if lhs.contextLength != rhs.contextLength { return lhs.contextLength > rhs.contextLength }
             return lhs.id < rhs.id
         }.first
+    }
+
+    /// 这些即便标着免费也不能当对话模型用。设置页的「拉取」列表也会拿它过滤，
+    /// 否则会出现 price=0 的 lyria（音乐生成）这种选项。
+    private static let excludedTokens = [
+        "lyria",            // 音乐生成
+        "content-safety",   // 内容审核专用
+        "north-mini-code",  // 代码专用
+        "laguna",           // 代码专用
+        "lfm",              // 2.6B，容易不守输出格式
+        "embed",
+        "rerank",
+    ]
+
+    public static func isNonChatModel(_ id: String) -> Bool {
+        let lower = id.lowercased()
+        return excludedTokens.contains { lower.contains($0) }
     }
 
     /// 排名越小越优先。宁可写死一张表，也不按参数量猜——免费清单每周都在变，
