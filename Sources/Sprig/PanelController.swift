@@ -1038,42 +1038,40 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
     }
 
     /// 搜索结果展示成「标题 + 域名」，标题可点。纯文本同时写进 raw，重开卡片还在。
+    /// 搜索默认折叠成一行摘要，点它弹出来源菜单——那些链接铺在正文里很吵。
     private func showSearchResults(_ report: SearchReport, query: String, owner: UUID) {
-        // 这张卡已经切到后台了：只把来源文字累积进去，别画到当前面板上
-        guard stack.last?.card.id == owner else {
-            var plain = "\n\n🔍 搜索「\(query)」"
-            for item in report.items.prefix(3) {
-                plain += "\n · \(item.title)"
-                if let host = item.host { plain += "  \(host)" }
-            }
-            if report.items.isEmpty { plain += "（没有找到结果）" }
-            plain += "\n\n"
+        searchResults[owner, default: []].append(report)
+        let index = searchResults[owner]!.count - 1
+
+        let plain = report.items.isEmpty
+            ? "\n🔍 搜索「\(query)」，没有找到结果\n"
+            : "\n🔍 搜索「\(query)」，参考了 \(report.items.count) 条来源\n"
+
+        if backgroundRaw[owner] != nil {
             backgroundRaw[owner, default: ""] += plain
             return
         }
-        guard !stack.isEmpty else { return }
-        let shown = Array(report.items.prefix(3))
+        guard stack.last?.card.id == owner, !stack.isEmpty else { return }
 
-        var plain = "\n\n🔍 搜索「\(query)」"
-        for item in shown {
-            plain += "\n · \(item.title)"
-            if let host = item.host { plain += "  \(host)" }
-        }
-        if shown.isEmpty { plain += "（没有找到结果）" }
-        plain += "\n\n"
         stack[stack.count - 1].raw += plain
 
-        answerView.append("\n\n🔍 搜索「\(query)」", term: nil)
-        if shown.isEmpty {
-            answerView.append("（没有找到结果）", term: nil)
+        // 记到卡片上，persistCurrentCard 会一起写盘，切卡后还能点开
+        var card = stack[stack.count - 1].card
+        var log = card.searchLog ?? []
+        log.append(CardSearchRecord(query: query, items: report.items))
+        card.searchLog = log
+        stack[stack.count - 1].card = card
+
+        if report.items.isEmpty {
+            answerView.append(plain, term: nil)
+        } else if let url = URL(string: "sprig-search://\(index)?card=\(owner.uuidString)") {
+            answerView.appendSearchLine(plain, url: url)
         } else {
-            answerView.appendSearchItems(shown)
+            answerView.append(plain, term: nil)
         }
-        answerView.append("\n\n", term: nil)
 
         answerHeight = measuredAnswerHeight()
         applyHeights(animated: false)
-        // 视口高度定了之后，还要让文本视图自己长到内容高度，否则超出部分滚不到
         answerView.syncHeightToContent()
         answerView.scrollToBottom()
     }
