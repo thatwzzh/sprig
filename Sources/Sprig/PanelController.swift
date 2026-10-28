@@ -1478,6 +1478,10 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         print("panel.width.closed =", panel.frame.width)
         print("clip.cornerRadius  =", content.layer?.cornerRadius ?? -1)
         print("answerView.frame   =", answerView.frame, "| 视口:", content.answerScroll.contentSize)
+        if let container = answerView.textContainer {
+            print("textContainer.size =", container.size,
+                  "| inset:", answerView.textContainerInset)
+        }
         print("--- 模型菜单 ---")
         for item in makeModelMenu().items {
             if item.isSeparatorItem {

@@ -49,7 +49,9 @@ final class AnswerTextView: NSTextView {
     /// 面板自身高度仍然由 `Theme.answerMaxHeight` 封顶，超出靠滚动看。
     func syncHeightToContent() {
         guard let layoutManager, let container = textContainer, bounds.width > 0 else { return }
-        container.size = NSSize(width: bounds.width, height: .greatestFiniteMagnitude)
+        // 别碰 container.size：widthTracksTextView = true 时 NSTextView 自己会把它
+        // 设成 frame.width - inset*2。手动设成 bounds.width 会让文字右侧多出 16pt，
+        // 直接画到面板外面去（"状态管理核心"的"核"被裁就是这个原因）。
         layoutManager.ensureLayout(for: container)
         let textHeight = layoutManager.usedRect(for: container).height
         let target = max(textHeight + textContainerInset.height * 2, 0)
