@@ -771,7 +771,13 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
                             }
                             break
                         } catch let error as LLMError {
-                            guard case .http(429, _) = error,
+                            // 429 是上游池被抢空；404 多半是模型下线（Gemini 换代就是这样）
+                            let retryable: Bool
+                            switch error {
+                            case .http(429, _), .http(404, _): retryable = true
+                            default: retryable = false
+                            }
+                            guard retryable,
                                   !produced,
                                   fallbackTried < 2,
                                   let next = self.switchToNextModel() else {

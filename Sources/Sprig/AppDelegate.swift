@@ -18,6 +18,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Settings.backfillContextLengths()
         // 内置 Ollama 被改成别的协议后，本地区域会空掉，补一条回来
         Settings.ensureLocalConfig()
+        // Gemini 旧模型下线后要换名字，否则一直 404
+        Settings.migrateRetiredGeminiModels()
 
         setupMainMenu()
         setupStatusItem()

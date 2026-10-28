@@ -69,7 +69,8 @@ public enum LLMError: LocalizedError, Sendable {
         case 401, 403:
             return "鉴权失败（HTTP \(status)）：API Key 无效，或这条 Key 没有该模型的权限。"
         case 404:
-            return "接口地址不对（HTTP 404）：检查 Base URL 是否该以 /v1 结尾。"
+            return "接口或模型不存在（HTTP 404）。Gemini 常见于模型已下线（去 AI Studio 看当前模型名）；"
+                + "其他服务检查 Base URL 是否该以 /v1 结尾。"
         case 429:
             return "被限流了（HTTP 429）：免费层有每分钟次数限制，等一分钟再问。"
         case 500...599:

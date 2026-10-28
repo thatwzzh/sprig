@@ -13,9 +13,9 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
     // 本地：只有一条 Ollama，模型名手填
     private let localURLField = NSTextField(string: "")
     private let localModelField = NSTextField(string: "")
-    // 免费：Gemini / OpenRouter，模型清单从接口拉
-    private let freePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
-    private let freeKeyField = NSSecureTextField(string: "")
+    // 免费：Gemini 和 OpenRouter 并列，各自一条 Key
+    private let geminiKeyField = NSSecureTextField(string: "")
+    private let openRouterKeyField = NSSecureTextField(string: "")
     private let freeModelsLabel = NSTextField(labelWithString: "")
     // 自定义：用户自填，可多条
     private let customPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -29,7 +29,6 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
     private let fetchButton = PointerButton(title: "拉取", target: nil, action: nil)
     private let testButton = PointerButton(title: "测试连接", target: nil, action: nil)
     private let syncFreeButton = PointerButton(title: "同步模型", target: nil, action: nil)
-    private let keyHelpButton = PointerButton(title: "去获取", target: nil, action: nil)
     private let removeButton = PointerButton(title: "－", target: nil, action: nil)
     private let webSearchToggle = NSButton(checkboxWithTitle: "让模型自己联网搜索",
                                            target: nil,
@@ -39,8 +38,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
     private let webSearchKeyField = NSSecureTextField(string: "")
     private let webSearchHelpButton = PointerButton(title: "去获取", target: nil, action: nil)
 
-    /// 免费/自定义两个下拉里每一项对应的配置 id
-    private var freeIDs: [UUID] = []
+    /// 自定义下拉里每一项对应的配置 id
     private var customIDs: [UUID] = []
 
     private convenience init() {
@@ -98,45 +96,67 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         fetchButton.toolTip = "列出本机 Ollama 已 pull 的模型"
         contentView.addSubview(fetchButton)
 
-        // ── 免费 ──
-        addGroupTitle("免费 · 模型清单从接口拉，可切换", y: 540, to: contentView)
-        freePopUp.frame = NSRect(x: 120, y: 508, width: 180, height: 26)
-        freePopUp.target = self
-        freePopUp.action = #selector(freeSelectionChanged)
-        contentView.addSubview(freePopUp)
+        // ── 免费：两条并列，各自一个 Key ──
+        addGroupTitle("免费 · 模型清单从接口拉，面板里可逐个切换", y: 542, to: contentView)
 
-        freeKeyField.font = .systemFont(ofSize: 12)
-        freeKeyField.delegate = self
-        freeKeyField.frame = NSRect(x: 120, y: 480, width: 280, height: 24)
-        contentView.addSubview(freeKeyField)
+        let geminiLabel = NSTextField(labelWithString: "Gemini")
+        geminiLabel.font = .systemFont(ofSize: 12)
+        geminiLabel.textColor = .secondaryLabelColor
+        geminiLabel.frame = NSRect(x: 24, y: 516, width: 72, height: 18)
+        contentView.addSubview(geminiLabel)
 
-        keyHelpButton.target = self
-        keyHelpButton.action = #selector(openKeyHelp)
-        keyHelpButton.bezelStyle = .rounded
-        keyHelpButton.controlSize = .small
-        keyHelpButton.font = .systemFont(ofSize: 12)
-        keyHelpButton.frame = NSRect(x: 406, y: 479, width: 70, height: 26)
-        keyHelpButton.isHidden = true
-        contentView.addSubview(keyHelpButton)
+        geminiKeyField.placeholderString = "Gemini API Key"
+        geminiKeyField.font = .systemFont(ofSize: 12)
+        geminiKeyField.delegate = self
+        geminiKeyField.frame = NSRect(x: 100, y: 512, width: 300, height: 24)
+        contentView.addSubview(geminiKeyField)
+
+        let geminiHelp = PointerButton(title: "去获取", target: self, action: #selector(openGeminiKeyPage))
+        geminiHelp.bezelStyle = .rounded
+        geminiHelp.controlSize = .small
+        geminiHelp.font = .systemFont(ofSize: 12)
+        geminiHelp.frame = NSRect(x: 406, y: 511, width: 70, height: 26)
+        geminiHelp.toolTip = "在 aistudio.google.com/apikey 领一个免费 Key"
+        contentView.addSubview(geminiHelp)
+
+        let orLabel = NSTextField(labelWithString: "OpenRouter")
+        orLabel.font = .systemFont(ofSize: 12)
+        orLabel.textColor = .secondaryLabelColor
+        orLabel.frame = NSRect(x: 24, y: 488, width: 72, height: 18)
+        contentView.addSubview(orLabel)
+
+        openRouterKeyField.placeholderString = "OpenRouter API Key（sk-or-v1-…）"
+        openRouterKeyField.font = .systemFont(ofSize: 12)
+        openRouterKeyField.delegate = self
+        openRouterKeyField.frame = NSRect(x: 100, y: 484, width: 300, height: 24)
+        contentView.addSubview(openRouterKeyField)
+
+        let orHelp = PointerButton(title: "去获取", target: self, action: #selector(openOpenRouterKeyPage))
+        orHelp.bezelStyle = .rounded
+        orHelp.controlSize = .small
+        orHelp.font = .systemFont(ofSize: 12)
+        orHelp.frame = NSRect(x: 406, y: 483, width: 70, height: 26)
+        orHelp.toolTip = "在 openrouter.ai/keys 领 Key"
+        contentView.addSubview(orHelp)
 
         syncFreeButton.target = self
         syncFreeButton.action = #selector(syncFreeModelsTapped)
         syncFreeButton.bezelStyle = .rounded
         syncFreeButton.controlSize = .small
         syncFreeButton.font = .systemFont(ofSize: 12)
-        syncFreeButton.frame = NSRect(x: 120, y: 450, width: 104, height: 26)
+        syncFreeButton.frame = NSRect(x: 120, y: 454, width: 104, height: 26)
         syncFreeButton.toolTip = "从接口拉取当前可用的免费模型（每天自动刷新）"
         contentView.addSubview(syncFreeButton)
 
         freeModelsLabel.font = .systemFont(ofSize: 11)
         freeModelsLabel.textColor = .secondaryLabelColor
         freeModelsLabel.lineBreakMode = .byTruncatingTail
-        freeModelsLabel.frame = NSRect(x: 232, y: 455, width: 244, height: 16)
+        freeModelsLabel.frame = NSRect(x: 232, y: 459, width: 244, height: 16)
         contentView.addSubview(freeModelsLabel)
 
         // ── 自定义 ──
-        addGroupTitle("自定义 · 填 Base URL 和 Key，给配置起个名", y: 424, to: contentView)
-        customPopUp.frame = NSRect(x: 120, y: 392, width: 200, height: 26)
+        addGroupTitle("自定义 · 填 Base URL 和 Key，给配置起个名", y: 436, to: contentView)
+        customPopUp.frame = NSRect(x: 120, y: 404, width: 200, height: 26)
         customPopUp.target = self
         customPopUp.action = #selector(customSelectionChanged)
         contentView.addSubview(customPopUp)
@@ -146,7 +166,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         addButton.bezelStyle = .rounded
         addButton.controlSize = .small
         addButton.font = .systemFont(ofSize: 13)
-        addButton.frame = NSRect(x: 326, y: 392, width: 32, height: 26)
+        addButton.frame = NSRect(x: 326, y: 404, width: 32, height: 26)
         addButton.toolTip = "新增一个自定义接入"
         contentView.addSubview(addButton)
 
@@ -155,26 +175,26 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         removeButton.bezelStyle = .rounded
         removeButton.controlSize = .small
         removeButton.font = .systemFont(ofSize: 13)
-        removeButton.frame = NSRect(x: 362, y: 392, width: 32, height: 26)
+        removeButton.frame = NSRect(x: 362, y: 404, width: 32, height: 26)
         removeButton.toolTip = "删除当前自定义接入"
         contentView.addSubview(removeButton)
 
         configure(customNameField, placeholder: "名称，例如「公司网关」")
-        customNameField.frame = NSRect(x: 120, y: 364, width: 120, height: 24)
+        customNameField.frame = NSRect(x: 120, y: 376, width: 120, height: 24)
         contentView.addSubview(customNameField)
 
         configure(customURLField, placeholder: "Base URL，填到 /v1 或只填域名")
-        customURLField.frame = NSRect(x: 248, y: 364, width: 228, height: 24)
+        customURLField.frame = NSRect(x: 248, y: 376, width: 228, height: 24)
         contentView.addSubview(customURLField)
 
         customKeyField.placeholderString = "API Key"
         customKeyField.font = .systemFont(ofSize: 12)
         customKeyField.delegate = self
-        customKeyField.frame = NSRect(x: 120, y: 336, width: 140, height: 24)
+        customKeyField.frame = NSRect(x: 120, y: 348, width: 140, height: 24)
         contentView.addSubview(customKeyField)
 
         configure(customModelField, placeholder: "模型名")
-        customModelField.frame = NSRect(x: 268, y: 336, width: 208, height: 24)
+        customModelField.frame = NSRect(x: 268, y: 348, width: 208, height: 24)
         contentView.addSubview(customModelField)
 
         testButton.target = self
@@ -182,13 +202,13 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         testButton.bezelStyle = .rounded
         testButton.controlSize = .small
         testButton.font = .systemFont(ofSize: 12)
-        testButton.frame = NSRect(x: 120, y: 306, width: 88, height: 26)
+        testButton.frame = NSRect(x: 120, y: 318, width: 88, height: 26)
         contentView.addSubview(testButton)
 
         statusLabel.font = .systemFont(ofSize: 11)
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.lineBreakMode = .byTruncatingTail
-        statusLabel.frame = NSRect(x: 214, y: 311, width: 262, height: 16)
+        statusLabel.frame = NSRect(x: 214, y: 323, width: 262, height: 16)
         contentView.addSubview(statusLabel)
 
         addSeparator(y: 280, to: contentView)
@@ -318,12 +338,6 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         Settings.providerConfigs.filter { $0.resolvedCategory == .custom }
     }
 
-    private var editingFree: ProviderConfig? {
-        let index = freePopUp.indexOfSelectedItem
-        guard index >= 0, index < freeIDs.count else { return freeConfigs.first }
-        return Settings.providerConfigs.first { $0.id == freeIDs[index] }
-    }
-
     private var editingCustom: ProviderConfig? {
         let index = customPopUp.indexOfSelectedItem
         guard index >= 0, index < customIDs.count else { return customConfigs.first }
@@ -357,54 +371,53 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
 
     // MARK: 免费
 
-    private func loadFreeFields() {
-        // popup 还没填充时 editingFree 会回退到第一条，会把"有清单的那条"顶掉
-        let keeping = freePopUp.numberOfItems > 0 ? editingFree?.id : nil
-        let configs = freeConfigs
-        freeIDs = configs.map(\.id)
-        freePopUp.removeAllItems()
-        for config in configs {
-            let title = config.isConfigured
-                ? config.displayName
-                : config.displayName + "（未配置）"
-            freePopUp.addItem(withTitle: title)
-        }
-        if let keeping, let index = freeIDs.firstIndex(of: keeping) {
-            freePopUp.selectItem(at: index)
-        } else if let equipped = configs.firstIndex(where: { !($0.cachedModels?.isEmpty ?? true) }) {
-            // 默认落在有清单的那条，否则用户看到的是"还没拉过"
-            freePopUp.selectItem(at: equipped)
-        }
-        freePopUp.isEnabled = configs.count > 1
+    private var geminiConfig: ProviderConfig? {
+        Settings.providerConfigs.first { $0.kind == .gemini }
+    }
 
-        guard let config = editingFree else {
-            freeKeyField.stringValue = ""
-            freeModelsLabel.stringValue = "没有免费接入"
-            keyHelpButton.isHidden = true
-            return
-        }
-        freeKeyField.stringValue = config.apiKey
-        freeKeyField.placeholderString = config.keyHelp != nil
-            ? "粘贴 API Key，没有就点右边的「去获取」"
-            : "粘贴 API Key"
-        keyHelpButton.isHidden = config.keyHelp == nil
-        keyHelpButton.toolTip = config.keyHelp?.text
-
-        let count = config.cachedModels?.count ?? 0
-        if count > 0 {
-            freeModelsLabel.stringValue = "\(count) 个模型 · 当前 \(config.modelLabel)"
-        } else {
-            freeModelsLabel.stringValue = "点「同步模型」拉取免费模型"
+    private var openRouterConfig: ProviderConfig? {
+        Settings.providerConfigs.first {
+            $0.kind == .openAICompatible && $0.baseURL.lowercased().contains("openrouter")
         }
     }
 
+    private func loadFreeFields() {
+        geminiKeyField.stringValue = geminiConfig?.apiKey ?? ""
+        openRouterKeyField.stringValue = openRouterConfig?.apiKey ?? ""
+
+        let geminiCount = geminiConfig?.cachedModels?.count ?? 0
+        let orCount = openRouterConfig?.cachedModels?.count ?? 0
+        freeModelsLabel.stringValue = "Gemini \(geminiCount) · OpenRouter \(orCount) · 当前 \(Settings.activeConfig.modelLabel)"
+        freeModelsLabel.toolTip = freeModelsLabel.stringValue
+    }
+
     private func persistFree() {
-        guard let config = editingFree else { return }
         var configs = Settings.providerConfigs
-        guard let index = configs.firstIndex(where: { $0.id == config.id }) else { return }
-        configs[index].category = .free
-        configs[index].apiKey = freeKeyField.stringValue
+        var changed = false
+        if let index = configs.firstIndex(where: { $0.kind == .gemini }) {
+            configs[index].apiKey = geminiKeyField.stringValue
+            configs[index].category = .free
+            changed = true
+        }
+        if let index = configs.firstIndex(where: {
+            $0.kind == .openAICompatible && $0.baseURL.lowercased().contains("openrouter")
+        }) {
+            configs[index].apiKey = openRouterKeyField.stringValue
+            configs[index].category = .free
+            changed = true
+        }
+        guard changed else { return }
         Settings.providerConfigs = configs
+    }
+
+    @objc private func openGeminiKeyPage() {
+        guard let url = URL(string: "https://aistudio.google.com/apikey") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    @objc private func openOpenRouterKeyPage() {
+        guard let url = URL(string: "https://openrouter.ai/keys") else { return }
+        NSWorkspace.shared.open(url)
     }
 
     // MARK: 自定义
@@ -452,13 +465,6 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         configs[index].apiKey = customKeyField.stringValue
         configs[index].model = customModelField.stringValue
         Settings.providerConfigs = configs
-    }
-
-    @objc private func freeSelectionChanged() {
-        guard let config = editingFree else { return }
-        Settings.selectProvider(id: config.id)
-        loadFreeFields()
-        statusLabel.stringValue = ""
     }
 
     @objc private func customSelectionChanged() {
@@ -548,24 +554,18 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
     }
 
     /// 打开「去哪里领 Key」的页面
-    @objc private func openKeyHelp() {
-        guard let help = editingFree?.keyHelp else { return }
-        NSWorkspace.shared.open(help.url)
-    }
-
     @objc private func syncFreeModelsTapped() {
         syncFreeButton.isEnabled = false
-        statusLabel.stringValue = "同步中…"
+        freeModelsLabel.stringValue = "同步中…"
 
         Task { @MainActor in
             let ok = await Settings.syncFreeModels()
             syncFreeButton.isEnabled = true
 
             guard ok else {
-                statusLabel.stringValue = "拉取失败，检查网络"
+                freeModelsLabel.stringValue = "拉取失败，检查网络 / Key"
                 return
             }
-            // 同步可能改了当前模型名，整块重载一次
             loadFreeFields()
             // 清单里混着下架、无权限、限流的模型，拉完立刻探一遍，
             // 否则用户第一次提问才会发现某个模型用不了
@@ -578,10 +578,16 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
     /// 用户改了半天自定义配置，点测试却在测免费模型。
     /// 逐个探活拉回来的免费模型
     private func probeFreeModels() async {
-        guard let config = editingFree,
-              let models = config.cachedModels, !models.isEmpty else { return }
+        // 两条免费接入都可能刚拉过清单，逐条探
+        for config in [geminiConfig, openRouterConfig].compactMap({ $0 }) {
+            guard let models = config.cachedModels, !models.isEmpty else { continue }
+            await probeOne(config: config, models: models)
+        }
+    }
 
-        statusLabel.stringValue = "测试 \(models.count) 个模型…"
+    private func probeOne(config: ProviderConfig, models: [String]) async {
+
+        freeModelsLabel.stringValue = "测试 \(models.count) 个模型…"
         let results = await ModelProbe.probe(models: models, config: config)
 
         let usable = results.filter(\.ok).count
@@ -591,10 +597,10 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         var summary = "\(models.count) 个模型：\(usable) 可用"
         if broken > 0 { summary += "、\(broken) 不通" }
         if quota > 0 { summary += "、\(quota) 限流" }
-        statusLabel.stringValue = summary
+        freeModelsLabel.stringValue = summary
 
         for result in results where !result.ok {
-            print("[probe] \(result.model) → \(result.summary)")
+            print("[probe] \(config.displayName) \(result.model) → \(result.summary)")
         }
     }
 
@@ -666,7 +672,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
             Settings.webSearchAPIKey = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         case localURLField, localModelField:
             persistLocal()
-        case freeKeyField:
+        case geminiKeyField, openRouterKeyField:
             persistFree()
         case customNameField, customURLField, customKeyField, customModelField:
             persistCustom()
@@ -678,9 +684,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
     @objc private func webSearchToggled() {
         Settings.webSearchEnabled = webSearchToggle.state == .on
         if Settings.webSearchEnabled && Settings.webSearchAPIKey.isEmpty {
-            statusLabel.stringValue = "还需填 \(Settings.searchBackend.title) Key"
-        } else {
-            statusLabel.stringValue = ""
+            webSearchKeyField.placeholderString = "还需填 \(Settings.searchBackend.title) Key"
         }
     }
 
@@ -701,7 +705,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         webSearchKeyField.stringValue = Settings.webSearchAPIKey
         webSearchKeyField.placeholderString = backend.keyPlaceholder
         webSearchHelpButton.toolTip = searchHelpTooltip()
-        statusLabel.stringValue = backend.quotaNote
+        webSearchKeyField.toolTip = backend.quotaNote
     }
 
     private func reloadSearchBackendPopUp() {
@@ -722,10 +726,6 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         NSApp.activate(ignoringOtherApps: true)
         // 每次打开都从最新状态重建，避免面板里切过模型后这里还显示旧的
         reloadAll()
-        // 没做过别的操作时，这里显示免费模型的同步情况
-        statusLabel.stringValue = Settings.freeModelsLastSync == nil
-            ? ""
-            : "免费模型 \(Settings.freeModelsCount) 个"
         guard let window else { return }
         window.makeKeyAndOrderFront(nil)
         // 面板长期处于 .floating，这里再抬一次，确保任何情况下设置都压在它上面
@@ -745,11 +745,9 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
     func debugDump() {
         print("local.url          =", localURLField.stringValue.isEmpty ? "(空)" : localURLField.stringValue)
         print("local.model        =", localModelField.stringValue.isEmpty ? "(空)" : localModelField.stringValue)
-        print("free.popup.items   =", freePopUp.itemTitles)
-        print("free.popup.selected=", freePopUp.titleOfSelectedItem ?? "nil")
-        print("free.hasKey        =", freeKeyField.stringValue.isEmpty ? "否" : "是")
+        print("gemini.hasKey      =", geminiKeyField.stringValue.isEmpty ? "否" : "是")
+        print("openrouter.hasKey  =", openRouterKeyField.stringValue.isEmpty ? "否" : "是")
         print("free.modelsLabel   =", freeModelsLabel.stringValue)
-        print("keyHelp.button     =", keyHelpButton.isHidden ? "隐藏" : "显示")
         print("custom.popup.items =", customPopUp.itemTitles)
         print("custom.selected    =", customPopUp.titleOfSelectedItem ?? "nil")
         print("custom.url         =", customURLField.stringValue.isEmpty ? "(空)" : customURLField.stringValue)

@@ -29,7 +29,7 @@ public struct ProviderConfig: Codable, Identifiable, Sendable, Equatable {
         /// 免费层价目表变动频繁，这里只放当前确认可用的默认值，用户随时可改
         public var defaultModel: String {
             switch self {
-            case .gemini: return "gemini-2.5-flash"
+            case .gemini: return "gemini-3.8-flash"
             case .ollama: return "qwen3:4b-instruct"
             case .openAICompatible: return "gpt-4o-mini"
             }

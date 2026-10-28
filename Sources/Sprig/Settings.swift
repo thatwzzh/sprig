@@ -146,6 +146,21 @@ enum Settings {
         providerConfigs = configs
     }
 
+    /// Gemini 下线旧模型时（如 2.5-flash → 3.8-flash），存量配置不会自动跟着换，
+    /// 否则调用会一直 404。这里把已知下线的换成本代默认值。
+    static func migrateRetiredGeminiModels() {
+        let retired = ["gemini-2.5-flash", "gemini-2.5-pro"]
+        var configs = providerConfigs
+        var changed = false
+        for index in configs.indices where configs[index].kind == .gemini {
+            guard retired.contains(configs[index].model) else { continue }
+            configs[index].model = ProviderConfig.Kind.gemini.defaultModel
+            changed = true
+        }
+        guard changed else { return }
+        providerConfigs = configs
+    }
+
     /// 老配置里没有 contextLength 字段，按 kind 能确定的补上。
     /// 不补的话，用云端模型时上下文预算会退回保守的 12000 字，白白浪费窗口。
     static func backfillContextLengths() {
@@ -316,7 +331,13 @@ enum Settings {
         switch config.kind {
         case .gemini:
             let all = await GeminiProvider.availableModels(apiKey: config.apiKey)
-            return all.filter { $0.lowercased().contains("flash") }
+            // 列表里混着 tts / image / live / native-audio 这些专用模型，不能拿来对话
+            let blocked = ["tts", "image", "live", "native-audio", "deep-research", "lyria", "embedding"]
+            return all.filter { name in
+                let lower = name.lowercased()
+                guard lower.contains("flash") || lower.contains("pro") else { return false }
+                return !blocked.contains { lower.contains($0) }
+            }
         case .openAICompatible:
             guard let free = try? await FreeModelCatalog.openRouterFreeModels() else { return [] }
             return free
