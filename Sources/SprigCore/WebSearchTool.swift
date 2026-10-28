@@ -40,7 +40,7 @@ public enum SearchBackend: String, Codable, Sendable, CaseIterable {
 }
 
 /// 一条搜索结果。模型看摘要，用户看标题和链接。
-public struct SearchItem: Sendable, Equatable {
+public struct SearchItem: Codable, Sendable, Equatable {
     public let title: String
     public let url: String
     public let summary: String

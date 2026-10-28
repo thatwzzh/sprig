@@ -35,10 +35,28 @@ public struct GeminiProvider: LLMProvider {
     }
 
     public func stream(messages: [ChatMessage]) -> AsyncThrowingStream<String, Error> {
+        // 纯文本路径：丢掉工具事件，行为和以前一致
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    let request = try makeRequest(messages: messages)
+                    for try await event in streamEvents(messages: messages, tools: []) {
+                        if case .text(let chunk) = event { continuation.yield(chunk) }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: LLMError.wrapping(error))
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    public func streamEvents(messages: [ChatMessage],
+                             tools: [ToolDefinition]) -> AsyncThrowingStream<ChatEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let request = try makeRequest(messages: messages, tools: tools)
                     let (bytes, response) = try await session.bytes(for: request)
 
                     guard let http = response as? HTTPURLResponse else {
@@ -50,6 +68,7 @@ public struct GeminiProvider: LLMProvider {
                         throw LLMError.http(status: http.statusCode, body: body)
                     }
 
+                    var pendingCalls: [ToolCall] = []
                     for try await line in bytes.lines {
                         guard line.hasPrefix("data:") else { continue }
                         let payload = line.dropFirst("data:".count)
@@ -77,9 +96,23 @@ public struct GeminiProvider: LLMProvider {
                         }
                         for part in parts {
                             if let text = part["text"] as? String, !text.isEmpty {
-                                continuation.yield(text)
+                                continuation.yield(.text(text))
+                            }
+                            // Gemini 把工具调用放在 parts 里的 functionCall，
+                            // 没有 call id，自己生成一个用于回填结果
+                            if let call = part["functionCall"] as? [String: Any],
+                               let name = call["name"] as? String, !name.isEmpty {
+                                let args = call["args"] as? [String: Any] ?? [:]
+                                let json = (try? JSONSerialization.data(withJSONObject: args))
+                                    .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+                                pendingCalls.append(ToolCall(id: UUID().uuidString,
+                                                             name: name,
+                                                             arguments: json))
                             }
                         }
+                    }
+                    if !pendingCalls.isEmpty {
+                        continuation.yield(.toolCalls(pendingCalls))
                     }
                     continuation.finish()
                 } catch {
@@ -90,7 +123,8 @@ public struct GeminiProvider: LLMProvider {
         }
     }
 
-    private func makeRequest(messages: [ChatMessage]) throws -> URLRequest {
+    private func makeRequest(messages: [ChatMessage],
+                             tools: [ToolDefinition] = []) throws -> URLRequest {
         guard let url = endpoint else { throw LLMError.badURL(baseURL.absoluteString) }
 
         var request = URLRequest(url: url)
@@ -104,6 +138,8 @@ public struct GeminiProvider: LLMProvider {
         // Gemini 的 contents 只有 user / model 两种角色，system 走 systemInstruction
         var systemText: String?
         var contents: [[String: Any]] = []
+        // Gemini 的 functionResponse 只认工具名，这里记下 id → name 好回填
+        var callNames: [String: String] = [:]
         for message in messages {
             switch message.role {
             case .system:
@@ -111,10 +147,26 @@ public struct GeminiProvider: LLMProvider {
             case .user:
                 contents.append(["role": "user", "parts": [["text": message.content]]])
             case .assistant:
-                contents.append(["role": "model", "parts": [["text": message.content]]])
+                if let calls = message.toolCalls, !calls.isEmpty {
+                    var parts: [[String: Any]] = []
+                    for call in calls {
+                        callNames[call.id] = call.name
+                        let args = (try? JSONSerialization.jsonObject(
+                            with: Data(call.arguments.utf8))) as? [String: Any] ?? [:]
+                        parts.append(["functionCall": ["name": call.name, "args": args]])
+                    }
+                    contents.append(["role": "model", "parts": parts])
+                } else if !message.content.isEmpty {
+                    contents.append(["role": "model", "parts": [["text": message.content]]])
+                }
             case .tool:
-                // Gemini 这一版没接工具调用；真收到工具结果就当用户补充的参考资料
-                contents.append(["role": "user", "parts": [["text": message.content]]])
+                // Gemini 用 functionResponse 回传结果，role 是 user；
+                // 它没有 call id，只能靠工具名对应
+                let name = message.toolCallID.flatMap { callNames[$0] } ?? "tool"
+                contents.append(["role": "user", "parts": [[
+                    "functionResponse": ["name": name,
+                                         "response": ["result": message.content]],
+                ]]])
             }
         }
 
@@ -134,8 +186,39 @@ public struct GeminiProvider: LLMProvider {
         if let systemText, !systemText.isEmpty {
             body["systemInstruction"] = ["parts": [["text": systemText]]]
         }
+        if !tools.isEmpty {
+            body["tools"] = [["functionDeclarations": tools.map(declaration(for:))]]
+        }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         return request
+    }
+
+    /// 把我们的 ToolDefinition 翻成 Gemini 的 functionDeclarations 条目。
+    private func declaration(for tool: ToolDefinition) -> [String: Any] {
+        var parameters: [String: Any] = [:]
+        if let data = tool.parametersJSON.data(using: .utf8),
+           let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            parameters = uppercaseSchemaTypes(parsed)
+        }
+        return ["name": tool.name,
+                "description": tool.description,
+                "parameters": parameters]
+    }
+
+    /// Gemini 的 schema 要求类型名大写（OBJECT / STRING / ARRAY），
+    /// 我们存的是标准 JSON Schema 的小写写法，递归改一遍。
+    private func uppercaseSchemaTypes(_ node: [String: Any]) -> [String: Any] {
+        var out = node
+        if let type = node["type"] as? String { out["type"] = type.uppercased() }
+        if let properties = node["properties"] as? [String: Any] {
+            out["properties"] = properties.mapValues { value -> Any in
+                (value as? [String: Any]).map(uppercaseSchemaTypes) ?? value
+            }
+        }
+        if let items = node["items"] as? [String: Any] {
+            out["items"] = uppercaseSchemaTypes(items)
+        }
+        return out
     }
 
     private var endpoint: URL? {

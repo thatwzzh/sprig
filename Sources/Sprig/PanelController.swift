@@ -1132,6 +1132,30 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         persistCurrentCard()
     }
 
+    /// 重渲染后 raw 里只剩纯文本，链接信息丢了。
+    /// 按「🔍 搜索「」出现的顺序对上 card.searchLog，把每一行重新变成链接。
+    private func attachSearchLinks(for card: AnswerCard) {
+        guard let log = card.searchLog, !log.isEmpty,
+              let storage = answerView.textStorage else { return }
+
+        let text = storage.string as NSString
+        var index = 0
+        var location = 0
+        while location < text.length, index < log.count {
+            let lineRange = text.lineRange(for: NSRange(location: location, length: 0))
+            if text.substring(with: lineRange).contains("🔍 搜索「"),
+               let url = URL(string: "sprig-search://\(index)?card=\(card.id.uuidString)") {
+                storage.addAttributes([
+                    .link: url,
+                    .foregroundColor: NSColor.secondaryLabelColor,
+                    .cursor: NSCursor.pointingHand,
+                ], range: lineRange)
+                index += 1
+            }
+            location = lineRange.upperBound
+        }
+    }
+
     private func apply(_ segment: StreamSegment) {
         switch segment {
         case .text(let text):
@@ -1167,6 +1191,7 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         for segment in replay.consume(node.raw) + replay.flush() {
             apply(segment)
         }
+        attachSearchLinks(for: node.card)
 
         if node.raw.isEmpty && placeholder {
             answerView.showThinkingPlaceholder()
@@ -1396,10 +1421,10 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
               let index = Int(url.host ?? ""),
               let cardID = components.queryItems?.first(where: { $0.name == "card" })?.value,
               let uuid = UUID(uuidString: cardID),
-              let reports = searchResults[uuid], index < reports.count else { return }
+              let resolved = resolveSearchRecord(cardID: uuid, index: index),
+              !resolved.items.isEmpty else { return }
 
-        let report = reports[index]
-        guard !report.items.isEmpty else { return }
+        let report = resolved
 
         let menu = NSMenu()
         menu.autoenablesItems = false
@@ -1419,6 +1444,19 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
             menu.addItem(entry)
         }
         menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+    }
+
+    /// 内存里有就用内存的，没有就从卡片里取。切卡后重渲染走的是后者。
+    private func resolveSearchRecord(cardID: UUID, index: Int) -> CardSearchRecord? {
+        if let reports = searchResults[cardID], index < reports.count {
+            let report = reports[index]
+            return CardSearchRecord(query: "", items: report.items)
+        }
+        if let log = stack.last?.card.searchLog, stack.last?.card.id == cardID,
+           index < log.count {
+            return log[index]
+        }
+        return nil
     }
 
     @objc private func openSearchSource(_ sender: NSMenuItem) {
