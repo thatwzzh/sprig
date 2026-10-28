@@ -136,8 +136,18 @@ enum Settings {
     /// 用户可能把内置那条改成别的协议（改 Base URL 到 api.openai.com 之类），
     /// 那样本地区域会空着——本地推理是常用入口，不能让它消失。
     static func ensureLocalConfig() {
-        guard !providerConfigs.contains(where: { $0.resolvedCategory == .local }) else { return }
         var configs = providerConfigs
+
+        // 按 kind 判断而不是 resolvedCategory：category 字段可能是 nil（旧数据）
+        // 或被中途改过，只靠它会在每次启动时都判定"没有本地"，越补越多。
+        if let index = configs.firstIndex(where: { $0.kind == .ollama }) {
+            // 已有就不再新增，只把分类补正
+            guard configs[index].category != .local else { return }
+            configs[index].category = .local
+            providerConfigs = configs
+            return
+        }
+
         configs.append(ProviderConfig(name: "Ollama 本地",
                                       kind: .ollama,
                                       baseURL: ProviderConfig.Kind.ollama.defaultBaseURL,
