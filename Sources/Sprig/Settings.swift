@@ -156,6 +156,22 @@ enum Settings {
         providerConfigs = configs
     }
 
+    /// 老用户升级后没有智谱这条内置接入，补一条（key 留空，等他去填）。
+    /// 只在完全没有智谱配置时才加，避免和用户自建的重复。
+    static func ensureZhipuConfig() {
+        guard !providerConfigs.contains(where: { $0.baseURL.lowercased().contains("bigmodel") }) else { return }
+        var configs = providerConfigs
+        configs.append(ProviderConfig(id: ProviderConfig.builtinZhipuID,
+                                      name: "智谱 GLM（免费）",
+                                      kind: .openAICompatible,
+                                      baseURL: "https://open.bigmodel.cn/api/paas/v4",
+                                      model: "glm-4.7-flash",
+                                      isBuiltin: true,
+                                      contextLength: 204_800,
+                                      category: .free))
+        providerConfigs = configs
+    }
+
     /// Gemini 下线旧模型时（如 2.5-flash → 3.8-flash），存量配置不会自动跟着换，
     /// 否则调用会一直 404。这里把已知下线的换成本代默认值。
     static func migrateRetiredGeminiModels() {

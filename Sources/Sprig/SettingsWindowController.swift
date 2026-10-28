@@ -15,6 +15,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
     private let localSyncButton = PointerButton(title: "同步模型", target: nil, action: nil)
     private let localModelsLabel = NSTextField(labelWithString: "")
     // 免费：Gemini 和 OpenRouter 并列，各自一条 Key
+    private let zhipuKeyField = NSSecureTextField(string: "")
     private let geminiKeyField = NSSecureTextField(string: "")
     private let openRouterKeyField = NSSecureTextField(string: "")
     private let freeModelsLabel = NSTextField(labelWithString: "")
@@ -103,25 +104,26 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         // ── 免费：两条并列，各自一个 Key ──
         addGroupTitle("免费 · 模型清单从接口拉，面板里可逐个切换", y: 570, to: contentView)
 
-        let geminiLabel = NSTextField(labelWithString: "Gemini")
-        geminiLabel.font = .systemFont(ofSize: 12)
-        geminiLabel.textColor = .secondaryLabelColor
-        geminiLabel.frame = NSRect(x: 24, y: 544, width: 72, height: 18)
-        contentView.addSubview(geminiLabel)
+        // 顺序按「越可能长期免费越靠前」：智谱不限量，OpenRouter 靠上游池，Gemini 要代理
+        let zhipuLabel = NSTextField(labelWithString: "智谱 GLM")
+        zhipuLabel.font = .systemFont(ofSize: 12)
+        zhipuLabel.textColor = .secondaryLabelColor
+        zhipuLabel.frame = NSRect(x: 24, y: 544, width: 72, height: 18)
+        contentView.addSubview(zhipuLabel)
 
-        geminiKeyField.placeholderString = "Gemini API Key"
-        geminiKeyField.font = .systemFont(ofSize: 12)
-        geminiKeyField.delegate = self
-        geminiKeyField.frame = NSRect(x: 100, y: 540, width: 300, height: 24)
-        contentView.addSubview(geminiKeyField)
+        zhipuKeyField.placeholderString = "智谱 API Key（免费，推荐）"
+        zhipuKeyField.font = .systemFont(ofSize: 12)
+        zhipuKeyField.delegate = self
+        zhipuKeyField.frame = NSRect(x: 100, y: 540, width: 300, height: 24)
+        contentView.addSubview(zhipuKeyField)
 
-        let geminiHelp = PointerButton(title: "去获取", target: self, action: #selector(openGeminiKeyPage))
-        geminiHelp.bezelStyle = .rounded
-        geminiHelp.controlSize = .small
-        geminiHelp.font = .systemFont(ofSize: 12)
-        geminiHelp.frame = NSRect(x: 406, y: 539, width: 70, height: 26)
-        geminiHelp.toolTip = "在 aistudio.google.com/apikey 领一个免费 Key"
-        contentView.addSubview(geminiHelp)
+        let zhipuHelp = PointerButton(title: "去获取", target: self, action: #selector(openZhipuKeyPage))
+        zhipuHelp.bezelStyle = .rounded
+        zhipuHelp.controlSize = .small
+        zhipuHelp.font = .systemFont(ofSize: 12)
+        zhipuHelp.frame = NSRect(x: 406, y: 539, width: 70, height: 26)
+        zhipuHelp.toolTip = "在 open.bigmodel.cn 注册，手机号即可，GLM-4.7-Flash 免费不限量"
+        contentView.addSubview(zhipuHelp)
 
         let orLabel = NSTextField(labelWithString: "OpenRouter")
         orLabel.font = .systemFont(ofSize: 12)
@@ -143,24 +145,44 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         orHelp.toolTip = "在 openrouter.ai/keys 领 Key"
         contentView.addSubview(orHelp)
 
+        let geminiLabel = NSTextField(labelWithString: "Gemini")
+        geminiLabel.font = .systemFont(ofSize: 12)
+        geminiLabel.textColor = .secondaryLabelColor
+        geminiLabel.frame = NSRect(x: 24, y: 488, width: 72, height: 18)
+        contentView.addSubview(geminiLabel)
+
+        geminiKeyField.placeholderString = "Gemini API Key（需代理）"
+        geminiKeyField.font = .systemFont(ofSize: 12)
+        geminiKeyField.delegate = self
+        geminiKeyField.frame = NSRect(x: 100, y: 484, width: 300, height: 24)
+        contentView.addSubview(geminiKeyField)
+
+        let geminiHelp = PointerButton(title: "去获取", target: self, action: #selector(openGeminiKeyPage))
+        geminiHelp.bezelStyle = .rounded
+        geminiHelp.controlSize = .small
+        geminiHelp.font = .systemFont(ofSize: 12)
+        geminiHelp.frame = NSRect(x: 406, y: 483, width: 70, height: 26)
+        geminiHelp.toolTip = "在 aistudio.google.com/apikey 领一个免费 Key"
+        contentView.addSubview(geminiHelp)
+
         syncFreeButton.target = self
         syncFreeButton.action = #selector(syncFreeModels)
         syncFreeButton.bezelStyle = .rounded
         syncFreeButton.controlSize = .small
         syncFreeButton.font = .systemFont(ofSize: 12)
-        syncFreeButton.frame = NSRect(x: 24, y: 484, width: 104, height: 26)
-        syncFreeButton.toolTip = "从接口拉取当前可用的免费模型（每天自动刷新）"
+        syncFreeButton.frame = NSRect(x: 24, y: 456, width: 104, height: 26)
+        syncFreeButton.toolTip = "从各家接口拉取免费模型，只保留探测通过的"
         contentView.addSubview(syncFreeButton)
 
         freeModelsLabel.font = .systemFont(ofSize: 11)
         freeModelsLabel.textColor = .secondaryLabelColor
         freeModelsLabel.lineBreakMode = .byTruncatingTail
-        freeModelsLabel.frame = NSRect(x: 136, y: 489, width: 340, height: 16)
+        freeModelsLabel.frame = NSRect(x: 136, y: 461, width: 340, height: 16)
         contentView.addSubview(freeModelsLabel)
 
         // ── 自定义 ──
-        addGroupTitle("自定义 · 填 Base URL 和 Key，给配置起个名", y: 456, to: contentView)
-        customPopUp.frame = NSRect(x: 24, y: 426, width: 296, height: 26)
+        addGroupTitle("自定义 · 填 Base URL 和 Key，给配置起个名", y: 430, to: contentView)
+        customPopUp.frame = NSRect(x: 24, y: 400, width: 296, height: 26)
         customPopUp.target = self
         customPopUp.action = #selector(customSelectionChanged)
         contentView.addSubview(customPopUp)
@@ -170,7 +192,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         addButton.bezelStyle = .rounded
         addButton.controlSize = .small
         addButton.font = .systemFont(ofSize: 13)
-        addButton.frame = NSRect(x: 326, y: 426, width: 32, height: 26)
+        addButton.frame = NSRect(x: 326, y: 400, width: 32, height: 26)
         addButton.toolTip = "新增一个自定义接入"
         contentView.addSubview(addButton)
 
@@ -179,26 +201,26 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         removeButton.bezelStyle = .rounded
         removeButton.controlSize = .small
         removeButton.font = .systemFont(ofSize: 13)
-        removeButton.frame = NSRect(x: 362, y: 426, width: 32, height: 26)
+        removeButton.frame = NSRect(x: 362, y: 400, width: 32, height: 26)
         removeButton.toolTip = "删除当前自定义接入"
         contentView.addSubview(removeButton)
 
         configure(customNameField, placeholder: "名称，例如「公司网关」")
-        customNameField.frame = NSRect(x: 24, y: 396, width: 76, height: 24)
+        customNameField.frame = NSRect(x: 24, y: 370, width: 76, height: 24)
         contentView.addSubview(customNameField)
 
         configure(customURLField, placeholder: "Base URL，填到 /v1 或只填域名")
-        customURLField.frame = NSRect(x: 106, y: 396, width: 156, height: 24)
+        customURLField.frame = NSRect(x: 106, y: 370, width: 156, height: 24)
         contentView.addSubview(customURLField)
 
         customKeyField.placeholderString = "API Key"
         customKeyField.font = .systemFont(ofSize: 12)
         customKeyField.delegate = self
-        customKeyField.frame = NSRect(x: 268, y: 396, width: 90, height: 24)
+        customKeyField.frame = NSRect(x: 268, y: 370, width: 90, height: 24)
         contentView.addSubview(customKeyField)
 
         configure(customModelField, placeholder: "模型名")
-        customModelField.frame = NSRect(x: 364, y: 396, width: 112, height: 24)
+        customModelField.frame = NSRect(x: 364, y: 370, width: 112, height: 24)
         contentView.addSubview(customModelField)
 
         testButton.target = self
@@ -206,23 +228,23 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         testButton.bezelStyle = .rounded
         testButton.controlSize = .small
         testButton.font = .systemFont(ofSize: 12)
-        testButton.frame = NSRect(x: 24, y: 364, width: 104, height: 26)
+        testButton.frame = NSRect(x: 24, y: 338, width: 104, height: 26)
         contentView.addSubview(testButton)
 
         statusLabel.font = .systemFont(ofSize: 11)
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.lineBreakMode = .byTruncatingTail
-        statusLabel.frame = NSRect(x: 136, y: 369, width: 340, height: 16)
+        statusLabel.frame = NSRect(x: 136, y: 343, width: 340, height: 16)
         contentView.addSubview(statusLabel)
 
-        addSeparator(y: 336, to: contentView)
+        addSeparator(y: 310, to: contentView)
 
         // 知识库
-        addSectionTitle("知识库", y: 312, to: contentView)
+        addSectionTitle("知识库", y: 286, to: contentView)
         pathLabel.font = .systemFont(ofSize: 12)
         pathLabel.textColor = .secondaryLabelColor
         pathLabel.lineBreakMode = .byTruncatingMiddle
-        pathLabel.frame = NSRect(x: 24, y: 286, width: 330, height: 18)
+        pathLabel.frame = NSRect(x: 24, y: 260, width: 330, height: 18)
         pathLabel.toolTip = "卡片存放在这个目录的 \(CardStore.fileName) 里，换目录时会把现有卡片复制过去"
         contentView.addSubview(pathLabel)
 
@@ -230,31 +252,31 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         chooseButton.bezelStyle = .rounded
         chooseButton.controlSize = .small
         chooseButton.font = .systemFont(ofSize: 12)
-        chooseButton.frame = NSRect(x: 396, y: 281, width: 80, height: 26)
+        chooseButton.frame = NSRect(x: 396, y: 255, width: 80, height: 26)
         chooseButton.toolTip = "选择知识库文件夹"
         contentView.addSubview(chooseButton)
 
-        addSeparator(y: 262, to: contentView)
+        addSeparator(y: 236, to: contentView)
 
         // 联网搜索
-        addSectionTitle("联网搜索", y: 238, to: contentView)
+        addSectionTitle("联网搜索", y: 212, to: contentView)
 
         webSearchToggle.target = self
         webSearchToggle.action = #selector(webSearchToggled)
         webSearchToggle.font = .systemFont(ofSize: 12)
-        webSearchToggle.frame = NSRect(x: 22, y: 210, width: 200, height: 20)
+        webSearchToggle.frame = NSRect(x: 22, y: 184, width: 200, height: 20)
         webSearchToggle.state = Settings.webSearchEnabled ? .on : .off
         contentView.addSubview(webSearchToggle)
 
         thinkingToggle.target = self
         thinkingToggle.action = #selector(thinkingToggled)
         thinkingToggle.font = .systemFont(ofSize: 12)
-        thinkingToggle.frame = NSRect(x: 236, y: 210, width: 120, height: 20)
+        thinkingToggle.frame = NSRect(x: 236, y: 184, width: 120, height: 20)
         thinkingToggle.state = Settings.disableThinking ? .on : .off
         thinkingToggle.toolTip = "推理模型会先输出思考过程。知识问答用不上，关掉更快、更省 token。"
         contentView.addSubview(thinkingToggle)
 
-        searchBackendPopUp.frame = NSRect(x: 24, y: 182, width: 110, height: 24)
+        searchBackendPopUp.frame = NSRect(x: 24, y: 156, width: 110, height: 24)
         searchBackendPopUp.controlSize = .small
         searchBackendPopUp.font = .systemFont(ofSize: 12)
         searchBackendPopUp.target = self
@@ -266,7 +288,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         webSearchKeyField.font = .systemFont(ofSize: 12)
         webSearchKeyField.delegate = self
         webSearchKeyField.stringValue = Settings.webSearchAPIKey
-        webSearchKeyField.frame = NSRect(x: 140, y: 182, width: 260, height: 24)
+        webSearchKeyField.frame = NSRect(x: 140, y: 156, width: 260, height: 24)
         contentView.addSubview(webSearchKeyField)
 
         webSearchHelpButton.target = self
@@ -274,14 +296,14 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         webSearchHelpButton.bezelStyle = .rounded
         webSearchHelpButton.controlSize = .small
         webSearchHelpButton.font = .systemFont(ofSize: 12)
-        webSearchHelpButton.frame = NSRect(x: 406, y: 181, width: 70, height: 26)
+        webSearchHelpButton.frame = NSRect(x: 406, y: 155, width: 70, height: 26)
         webSearchHelpButton.toolTip = searchHelpTooltip()
         contentView.addSubview(webSearchHelpButton)
 
         let proxyLabel = NSTextField(labelWithString: "代理")
         proxyLabel.font = .systemFont(ofSize: 12)
         proxyLabel.textColor = .secondaryLabelColor
-        proxyLabel.frame = NSRect(x: 24, y: 154, width: 40, height: 18)
+        proxyLabel.frame = NSRect(x: 24, y: 128, width: 40, height: 18)
         contentView.addSubview(proxyLabel)
 
         proxyField.placeholderString = "http://127.0.0.1:7890（留空则跟随系统）"
@@ -289,7 +311,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         proxyField.delegate = self
         proxyField.stringValue = Settings.customProxy
         proxyField.toolTip = "所有模型和搜索请求都走这个代理；改了立刻生效"
-        proxyField.frame = NSRect(x: 68, y: 150, width: 332, height: 24)
+        proxyField.frame = NSRect(x: 68, y: 124, width: 332, height: 24)
         contentView.addSubview(proxyField)
 
         let hint = NSTextField(wrappingLabelWithString:
@@ -300,7 +322,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
             + "联网搜索可切 Tavily（1000 次/月免费）或 DeepSeek（5 元/1000 次，中文更强）。")
         hint.font = .systemFont(ofSize: 11)
         hint.textColor = .secondaryLabelColor
-        hint.frame = NSRect(x: 24, y: 12, width: 452, height: 130)
+        hint.frame = NSRect(x: 24, y: 12, width: 452, height: 104)
         contentView.addSubview(hint)
 
         reloadAll()
@@ -348,8 +370,15 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         Settings.providerConfigs.first { $0.resolvedCategory == .local }
     }
 
+    /// 免费组按「越可能长期免费越靠前」排：智谱 → OpenRouter → Gemini
     private var freeConfigs: [ProviderConfig] {
-        Settings.providerConfigs.filter { $0.resolvedCategory == .free }
+        Settings.providerConfigs
+            .filter { $0.resolvedCategory == .free }
+            .sorted { (a: ProviderConfig, b: ProviderConfig) in a.freeSortRank < b.freeSortRank }
+    }
+
+    private var zhipuConfig: ProviderConfig? {
+        Settings.providerConfigs.first { $0.baseURL.lowercased().contains("bigmodel") }
     }
 
     private var customConfigs: [ProviderConfig] {
@@ -401,12 +430,15 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
     }
 
     private func loadFreeFields() {
+        zhipuKeyField.stringValue = zhipuConfig?.apiKey ?? ""
         geminiKeyField.stringValue = geminiConfig?.apiKey ?? ""
         openRouterKeyField.stringValue = openRouterConfig?.apiKey ?? ""
 
-        let geminiCount = geminiConfig?.cachedModels?.count ?? 0
-        let orCount = openRouterConfig?.cachedModels?.count ?? 0
-        freeModelsLabel.stringValue = "Gemini \(geminiCount) · OpenRouter \(orCount)"
+        var parts: [String] = []
+        if let count = zhipuConfig?.cachedModels?.count, count > 0 { parts.append("智谱 \(count)") }
+        if let count = openRouterConfig?.cachedModels?.count, count > 0 { parts.append("OpenRouter \(count)") }
+        if let count = geminiConfig?.cachedModels?.count, count > 0 { parts.append("Gemini \(count)") }
+        freeModelsLabel.stringValue = parts.isEmpty ? "点「同步模型」拉取" : parts.joined(separator: " · ")
         freeModelsLabel.toolTip = "当前使用：\(Settings.activeConfig.modelLabel)"
     }
 
@@ -425,12 +457,22 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
             configs[index].category = .free
             changed = true
         }
+        if let index = configs.firstIndex(where: { $0.baseURL.lowercased().contains("bigmodel") }) {
+            configs[index].apiKey = zhipuKeyField.stringValue
+            configs[index].category = .free
+            changed = true
+        }
         guard changed else { return }
         Settings.providerConfigs = configs
     }
 
     @objc private func openGeminiKeyPage() {
         guard let url = URL(string: "https://aistudio.google.com/apikey") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    @objc private func openZhipuKeyPage() {
+        guard let url = URL(string: "https://open.bigmodel.cn/usercenter/apikeys") else { return }
         NSWorkspace.shared.open(url)
     }
 
@@ -630,7 +672,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
             Settings.webSearchAPIKey = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         case localURLField:
             persistLocal()
-        case geminiKeyField, openRouterKeyField:
+        case zhipuKeyField, geminiKeyField, openRouterKeyField:
             persistFree()
         case proxyField:
             Settings.customProxy = field.stringValue
@@ -705,6 +747,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
     func debugDump() {
         print("local.url          =", localURLField.stringValue.isEmpty ? "(空)" : localURLField.stringValue)
         print("local.modelsLabel  =", localModelsLabel.stringValue)
+        print("zhipu.hasKey       =", zhipuKeyField.stringValue.isEmpty ? "否" : "是")
         print("gemini.hasKey      =", geminiKeyField.stringValue.isEmpty ? "否" : "是")
         print("openrouter.hasKey  =", openRouterKeyField.stringValue.isEmpty ? "否" : "是")
         print("free.modelsLabel   =", freeModelsLabel.stringValue)

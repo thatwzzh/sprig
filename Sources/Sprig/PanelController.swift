@@ -504,7 +504,9 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         menu.autoenablesItems = false
 
         for category in ProviderConfig.Category.allCases {
-            let group = configs.filter { $0.resolvedCategory == category }
+            let group = configs
+                .filter { $0.resolvedCategory == category }
+                .sorted { (a: ProviderConfig, b: ProviderConfig) in a.freeSortRank < b.freeSortRank }
             guard !group.isEmpty else { continue }
 
             let header = NSMenuItem(title: category.title, action: nil, keyEquivalent: "")

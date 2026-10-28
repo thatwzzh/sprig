@@ -82,6 +82,8 @@ public struct ProviderConfig: Codable, Identifiable, Sendable, Equatable {
     public static let builtinOllamaID = UUID(uuidString: "0A11AB00-0000-4000-8000-00000000B002")!
     /// OpenRouter 免费模型：由 FreeModelCatalog 自动创建并每日维护，id 固定便于幂等更新
     public static let builtinOpenRouterFreeID = UUID(uuidString: "5A1B0C00-0000-4000-8000-00000000C003")!
+    /// 智谱 GLM-4.7-Flash：官方标着永久免费，国内直连，不需要代理
+    public static let builtinZhipuID = UUID(uuidString: "5A1B0C00-0000-4000-8000-00000000D004")!
 
     public var id: UUID
     /// 用户自己起的名字，例如「我的 Gemini」「公司网关」
@@ -134,6 +136,16 @@ public struct ProviderConfig: Codable, Identifiable, Sendable, Equatable {
         case .openAICompatible:
             return baseURL.lowercased().contains("openrouter") ? .free : .custom
         }
+    }
+
+    /// 免费组内的展示顺序：智谱 → OpenRouter → Gemini。
+    /// 越靠前越可能长期免费，用户应该先看到。
+    public var freeSortRank: Int {
+        let base = baseURL.lowercased()
+        if base.contains("bigmodel") { return 0 }
+        if base.contains("openrouter") { return 1 }
+        if kind == .gemini { return 2 }
+        return 9
     }
 
     /// 面板菜单里要列出的模型。
@@ -201,9 +213,18 @@ public struct ProviderConfig: Codable, Identifiable, Sendable, Equatable {
 }
 
 public extension ProviderConfig {
-    /// 首次启动的预置接入。Gemini 在前：新用户开箱就有可用的免费模型。
+    /// 首次启动的预置接入。智谱在前：它当前是唯一「不限 token 总量」的国内免费模型。
     static func builtins(ollamaModel: String, ollamaBaseURL: String) -> [ProviderConfig] {
         [
+            ProviderConfig(id: builtinZhipuID,
+                           name: "智谱 GLM（免费）",
+                           kind: .openAICompatible,
+                           baseURL: "https://open.bigmodel.cn/api/paas/v4",
+                           model: "glm-4.7-flash",
+                           isBuiltin: true,
+                           // GLM-4.7-Flash 是 200K 窗口
+                           contextLength: 204_800,
+                           category: .free),
             ProviderConfig(id: builtinGeminiID,
                            name: "Gemini（免费）",
                            kind: .gemini,
