@@ -953,7 +953,11 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         answerView.clearThinkingPlaceholder()
         for segment in segments { apply(segment) }
 
-        answerHeight = measuredAnswerHeight()
+        // 流式过程中高度只增不减：换行时行数会 ±1，
+        // 若每次都跟着回落，面板就会忽高忽低。内容只增不减，没有变矮的理由。
+        // 收尾时（finishStreaming）再按实际测量值修正。
+        let measured = measuredAnswerHeight()
+        answerHeight = isStreaming ? max(measured, answerHeight) : measured
         applyHeights(animated: false)
         answerView.scrollToBottom()
     }
@@ -1001,6 +1005,9 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
 
     private func finishStreaming() {
         isStreaming = false
+        // 流式期间用的是「只增不减」的高度，这里按实际值收一次
+        answerHeight = measuredAnswerHeight()
+        applyHeights(animated: false)
         let tail = parser.flush()
         if !tail.isEmpty {
             pendingSegments.append(contentsOf: tail)

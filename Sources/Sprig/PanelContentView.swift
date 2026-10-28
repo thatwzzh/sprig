@@ -41,7 +41,11 @@ final class PanelContentView: NSView {
 
     /// 左侧问答区的宽度（不含右侧树）
     private var contentWidth: CGFloat {
-        treeVisible ? bounds.width - Theme.treeWidth : bounds.width
+        let available = treeVisible ? bounds.width - Theme.treeWidth : bounds.width
+        // 树刚展开时 bounds 还没跟上（窗口 resize 有一帧延迟），
+        // 那会儿减掉树宽会把内容压到 400 出头、右侧露出空白或直接被树盖住。
+        // 内容区永远至少占一个完整面板宽。
+        return max(Theme.panelWidth, available)
     }
 
     init() {
