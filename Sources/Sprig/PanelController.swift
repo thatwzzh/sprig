@@ -24,6 +24,9 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
 
     /// 从根卡到当前卡的路径；最后一个节点就是屏幕上正在看的这张卡
     private var stack: [Node] = []
+    /// 转到后台继续跑的卡片 → 已累积的原始文本。
+    /// 面板一次只显示一张卡，后台那些只累积不渲染，跑完统一落库。
+    private var backgroundRaw: [UUID: String] = [:]
 
     private var parser = TermParser()
     private var seenTerms: Set<String> = []
@@ -460,7 +463,8 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
 
     private func navigate(to card: AnswerCard) {
         guard stack.last?.card.id != card.id else { return }
-        cancelStreaming()
+        // 换显示而已，别把正在生成的那张卡掐掉
+        detachCurrentStreaming()
         Task { @MainActor [weak self] in
             guard let self else { return }
             let path = await CardStore.shared.path(to: card.id)
@@ -625,7 +629,10 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
     }
 
     private func createRootCard(question: String) {
-        cancelStreaming()
+        // 不取消正在进行的流式：让它继续跑完，结果直接落进那张卡。
+        // 用户切回来时看到的是完整内容，而不是被截断的半截答案。
+        detachCurrentStreaming()
+
         let card = AnswerCard(title: shortTitle(question), question: question)
         stack = [Node(card: card, raw: "", scroll: 0)]
         renderCurrent(placeholder: true)
@@ -634,7 +641,7 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         startStreaming(messages: [
             ChatMessage.system(Prompt.answer),
             .user(question),
-        ])
+        ], owner: card.id)
     }
 
     /// 从某张卡里选中片段后生成子卡
@@ -668,7 +675,7 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         startStreaming(messages: [
             ChatMessage.system(Prompt.contextual),
             .user(message),
-        ])
+        ], owner: card.id)
     }
 
     private func contextPath(upTo index: Int) -> [ContextAssembler.Node] {
@@ -711,7 +718,7 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
 
     // MARK: - 流式
 
-    private func startStreaming(messages: [ChatMessage]) {
+    private func startStreaming(messages: [ChatMessage], owner: UUID) {
         // 没填 key 就不发请求了，否则用户只能看到一条 401，比直接说清楚难懂得多
         let config = Settings.activeConfig
         guard config.isConfigured else {
@@ -743,6 +750,7 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         let searchBackend = Settings.searchBackend
         let maxRounds = 3
 
+        let ownerID = owner
         streamTask = Task { @MainActor [weak self] in
             guard let self else { return }
             var conversation = messages
@@ -764,7 +772,7 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
                                 switch event {
                                 case .text(let chunk):
                                     produced = true
-                                    self.consume(chunk)
+                                    self.consume(chunk, owner: ownerID)
                                 case .toolCalls(let calls):
                                     requested = calls
                                 }
@@ -785,18 +793,18 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
                             }
                             fallbackTried += 1
                             activeConfig = next
-                            self.consume("\n\n（\(activeConfig.displayName) 限流，已切到 \(next.modelLabel)）\n\n")
+                            self.consume("\n\n（\(activeConfig.displayName) 限流，已切到 \(next.modelLabel)）\n\n", owner: ownerID)
                         }
                     }
                     if Task.isCancelled { return }
 
                     guard !requested.isEmpty else {
-                        self.finishStreaming()
+                        self.finish(owner: ownerID)
                         return
                     }
                     guard round < maxRounds else {
-                        self.consume("\n\n（已连续搜索 \(maxRounds) 轮，先按现有资料回答）")
-                        self.finishStreaming()
+                        self.consume("\n\n（已连续搜索 \(maxRounds) 轮，先按现有资料回答）", owner: ownerID)
+                        self.finish(owner: ownerID)
                         return
                     }
 
@@ -815,18 +823,18 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
                                                                          backend: searchBackend,
                                                                          apiKey: searchKey)
                             conversation.append(.toolResult(report.modelText, for: call.id))
-                            self.showSearchResults(report, query: query)
+                            self.showSearchResults(report, query: query, owner: ownerID)
                         } catch {
                             let reason = LLMError.wrapping(error).localizedDescription
                             conversation.append(.toolResult("搜索失败：\(reason)", for: call.id))
-                            self.consume("\n\n🔍 搜索「\(query)」失败：\(reason)\n\n")
+                            self.consume("\n\n🔍 搜索「\(query)」失败：\(reason)\n\n", owner: ownerID)
                         }
                     }
                 }
-                self.finishStreaming()
+                self.finish(owner: ownerID)
             } catch {
                 if Task.isCancelled { return }
-                self.failStreaming(error)
+                self.fail(owner: ownerID, error: error)
             }
         }
     }
@@ -847,7 +855,19 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         return configs[index]
     }
 
-    private func consume(_ chunk: String) {
+    /// 收到一段流式内容。`owner` 是产生它的那张卡：
+    /// 正在面板上显示就走渲染，已经切走的只累积，避免把 A 的字画到 B 上。
+    private func consume(_ chunk: String, owner: UUID) {
+        // 已经在后台跑的任务就一直跑到底：parser 和渲染缓冲都是单例状态，
+        // 中途切回前台再接管，会把已经显示过的部分重放一遍。
+        if backgroundRaw[owner] != nil {
+            backgroundRaw[owner, default: ""] += chunk
+            return
+        }
+        guard stack.last?.card.id == owner else {
+            backgroundRaw[owner, default: ""] += chunk
+            return
+        }
         guard !stack.isEmpty else { return }
         stack[stack.count - 1].raw += chunk
 
@@ -855,6 +875,65 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         guard !segments.isEmpty else { return }
         pendingSegments.append(contentsOf: segments)
         scheduleFlush()
+    }
+
+    /// 把当前流式任务转到后台：不取消，只是不再往面板渲染。
+    /// 任务跑完时会调用 finish(owner:)，把完整答案写进那张卡。
+    private func detachCurrentStreaming() {
+        guard isStreaming, let cardID = stack.last?.card.id else { return }
+        backgroundRaw[cardID] = stack.last?.raw ?? ""
+        streamTask = nil
+        isStreaming = false
+        answerView.clearThinkingPlaceholder()
+    }
+
+    /// 流式结束。前台正常收尾；后台只把累积内容落库。
+    private func finish(owner: UUID) {
+        guard stack.last?.card.id == owner else {
+            let raw = backgroundRaw[owner] ?? ""
+            backgroundRaw[owner] = nil
+            Task { @MainActor in
+                if var card = await CardStore.shared.card(id: owner) {
+                    card.answer = raw
+                    await CardStore.shared.upsert(card)
+                }
+                self.refreshTreeIfVisible()
+                // 用户可能已经切回这张卡在等：把完整内容画出来
+                self.reloadIfDisplaying(owner)
+            }
+            return
+        }
+        finishStreaming()
+    }
+
+    /// 后台任务跑完了，如果用户正停在这张卡上，把完整内容重画一遍。
+    private func reloadIfDisplaying(_ cardID: UUID) {
+        guard stack.last?.card.id == cardID else { return }
+        Task { @MainActor in
+            guard let card = await CardStore.shared.card(id: cardID) else { return }
+            guard stack.last?.card.id == cardID else { return }
+            stack[stack.count - 1].card = card
+            stack[stack.count - 1].raw = card.answer
+            renderCurrent()
+        }
+    }
+
+    /// 流式失败。后台任务不弹提示到面板上，只记进卡片。
+    private func fail(owner: UUID, error: Error) {
+        guard stack.last?.card.id == owner else {
+            let raw = (backgroundRaw[owner] ?? "") + "\n\n⚠️ \(error.localizedDescription)"
+            backgroundRaw[owner] = nil
+            Task { @MainActor in
+                if var card = await CardStore.shared.card(id: owner) {
+                    card.answer = raw
+                    await CardStore.shared.upsert(card)
+                }
+                self.refreshTreeIfVisible()
+                self.reloadIfDisplaying(owner)
+            }
+            return
+        }
+        failStreaming(error)
     }
 
     private func scheduleFlush() {
@@ -880,7 +959,19 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
     }
 
     /// 搜索结果展示成「标题 + 域名」，标题可点。纯文本同时写进 raw，重开卡片还在。
-    private func showSearchResults(_ report: SearchReport, query: String) {
+    private func showSearchResults(_ report: SearchReport, query: String, owner: UUID) {
+        // 这张卡已经切到后台了：只把来源文字累积进去，别画到当前面板上
+        guard stack.last?.card.id == owner else {
+            var plain = "\n\n🔍 搜索「\(query)」"
+            for item in report.items.prefix(3) {
+                plain += "\n · \(item.title)"
+                if let host = item.host { plain += "  \(host)" }
+            }
+            if report.items.isEmpty { plain += "（没有找到结果）" }
+            plain += "\n\n"
+            backgroundRaw[owner, default: ""] += plain
+            return
+        }
         guard !stack.isEmpty else { return }
         let shown = Array(report.items.prefix(3))
 
@@ -1036,7 +1127,7 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
 
     private func go(to index: Int) {
         guard index >= 0, index < stack.count - 1 else { return }
-        cancelStreaming()
+        detachCurrentStreaming()
         stack[stack.count - 1].scroll = currentScroll()
         stack.removeSubrange((index + 1)...)
         renderCurrent()
