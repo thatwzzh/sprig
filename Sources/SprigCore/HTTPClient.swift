@@ -23,6 +23,16 @@ public enum HTTPClient {
         }
     }
 
+    /// 丢掉当前 session 并重建。TLS 握手失败时调用——
+    /// URLSession 的连接池里可能留着一条已经坏掉的 TLS 会话，
+    /// 不换池的话每次重试都会撞上它。
+    public static func resetSession() {
+        lock.lock()
+        defer { lock.unlock() }
+        cached?.invalidateAndCancel()
+        cached = nil
+    }
+
     public static var streaming: URLSession {
         lock.lock()
         defer { lock.unlock() }

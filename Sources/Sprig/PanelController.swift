@@ -787,8 +787,10 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
                             }
                             break
                         } catch let error as LLMError {
-                            // TLS 抖动 / 连接中断：同一个模型重连一次就够了
+                            // TLS 抖动 / 连接中断：同一个模型重连一次就够了。
+                            // 先换掉连接池——坏掉的 TLS 会话会被复用，不换池重试也白费。
                             if error.isTransient, !produced, fallbackTried < 2 {
+                                HTTPClient.resetSession()
                                 fallbackTried += 1
                                 continue
                             }
