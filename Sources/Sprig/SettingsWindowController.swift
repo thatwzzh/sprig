@@ -565,18 +565,45 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
                 statusLabel.stringValue = "拉取失败，检查网络"
                 return
             }
-            statusLabel.stringValue = "\(Settings.freeModelsCount) 个免费模型"
             // 同步可能改了当前模型名，整块重载一次
             loadFreeFields()
+            // 清单里混着下架、无权限、限流的模型，拉完立刻探一遍，
+            // 否则用户第一次提问才会发现某个模型用不了
+            await probeFreeModels()
+        }
+    }
+
+    /// 这个按钮在「自定义」区域里，测的就是当前编辑的那条自定义配置。
+    /// 之前测的是 Settings.activeConfig（当前正在用的接入），和按钮位置对不上——
+    /// 用户改了半天自定义配置，点测试却在测免费模型。
+    /// 逐个探活拉回来的免费模型
+    private func probeFreeModels() async {
+        guard let config = editingFree,
+              let models = config.cachedModels, !models.isEmpty else { return }
+
+        statusLabel.stringValue = "测试 \(models.count) 个模型…"
+        let results = await ModelProbe.probe(models: models, config: config)
+
+        let usable = results.filter(\.ok).count
+        let quota = results.filter(\.isQuotaIssue).count
+        let broken = results.count - usable - quota
+
+        var summary = "\(models.count) 个模型：\(usable) 可用"
+        if broken > 0 { summary += "、\(broken) 不通" }
+        if quota > 0 { summary += "、\(quota) 限流" }
+        statusLabel.stringValue = summary
+
+        for result in results where !result.ok {
+            print("[probe] \(result.model) → \(result.summary)")
         }
     }
 
     @objc private func testConnection() {
-        persistLocal()
-        persistFree()
         persistCustom()
-        // 测「当前正在用」的那条，而不是某个表单——避免测完发现改的是另一条
-        let config = Settings.activeConfig
+        guard let config = editingCustom else {
+            statusLabel.stringValue = "没有自定义配置可测，点 ＋ 新建一条"
+            return
+        }
 
         guard config.isConfigured else {
             statusLabel.stringValue = config.kind.needsAPIKey ? "先填 API Key" : "先填模型名"

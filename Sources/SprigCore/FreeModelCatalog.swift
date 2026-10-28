@@ -110,6 +110,7 @@ public enum FreeModelCatalog {
         "north-mini-code",  // 代码专用
         "laguna",           // 代码专用
         "lfm",              // 2.6B，容易不守输出格式
+        "inkling",          // 403：OpenRouter 限定只能被 agentic harness 调用，裸 API 直接拒
         "embed",
         "rerank",
     ]
@@ -124,19 +125,19 @@ public enum FreeModelCatalog {
     private static let preference: [(token: String, rank: Int)] = [
         ("qwen3", 10),                  // 中文和指令遵循最稳的一档
         ("qwen", 12),
-        ("gemma-4-31b", 20),            // dense 31B，输出格式守得住
-        ("gemma-4", 26),
-        ("nemotron-3-super", 30),
-        ("nemotron-3.5-super-vl", 32),
+        // 实测 2026-10-28：gemma 系上游共享池经常 429，nvidia 系稳定，所以后者优先
+        ("nemotron-3.5-super-vl", 20),
+        ("nemotron-3.5-lightning", 24),
+        ("nemotron-3-ultra", 28),
+        ("gemma-4-31b", 34),            // dense 31B，格式守得住，但常被上游限流
+        ("gemma-4", 38),
+        ("nemotron-3-super", 42),
         ("xing4", 36),                  // 星辰，中文语料多
         ("minimax", 40),
         ("inkling-small", 44),          // 1M 上下文，追问链长也不怕
-        ("nemotron-3.5-lightning", 48), // 快，兜底
-        ("inkling", 52),
         ("nemotron-3-nano", 56),
         ("dots", 62),
         ("flint", 66),
-        ("nemotron-3-ultra", 70),       // 550B，慢
         ("openrouter/free", 90),        // 路由器，选到什么都说不准
     ]
 

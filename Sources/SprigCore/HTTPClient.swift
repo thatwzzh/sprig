@@ -5,8 +5,8 @@ import Foundation
 /// 之前每个 provider 在 init 里各建一个 session，而 `Settings.provider` 是每次发消息
 /// 现构造一次——等于每次提问都新建 session：TLS 握手重做（首字延迟多 100–300ms），
 /// 旧 session 不 invalidate 还会一直挂着。
-enum HTTPClient {
-    static let streaming: URLSession = {
+public enum HTTPClient {
+    public static let streaming: URLSession = {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 300
         config.timeoutIntervalForResource = 900

@@ -92,6 +92,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return
         }
+        if arguments.contains("--probe-free") {
+            Task { @MainActor in
+                _ = await Settings.syncFreeModels()
+                for config in Settings.providerConfigs where config.resolvedCategory == .free {
+                    guard let models = config.cachedModels, !models.isEmpty else {
+                        print("=== \(config.displayName)：没有模型清单 ===")
+                        continue
+                    }
+                    print("=== \(config.displayName)（\(models.count) 个）===")
+                    let results = await ModelProbe.probe(models: models, config: config)
+                    for result in results {
+                        print(result.ok ? "  ✓ \(result.model)"
+                                        : "  ✗ \(result.model) → \(result.summary)")
+                    }
+                    let usable = results.filter(\.ok).count
+                    print("  小结：\(usable)/\(results.count) 可用")
+                }
+                NSApp.terminate(nil)
+            }
+            return
+        }
         if arguments.contains("--tree-dump") {
             let filterIndex = arguments.firstIndex(of: "--tree-filter")
             let filter = filterIndex.flatMap { $0 + 1 < arguments.count ? arguments[$0 + 1] : nil }
