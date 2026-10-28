@@ -24,6 +24,8 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
 
     /// 从根卡到当前卡的路径；最后一个节点就是屏幕上正在看的这张卡
     private var stack: [Node] = []
+    /// 每张卡的搜索记录，点搜索提示行时用来弹来源菜单
+    private var searchResults: [UUID: [SearchReport]] = [:]
     /// 转到后台继续跑的卡片 → 已累积的原始文本。
     /// 面板一次只显示一张卡，后台那些只累积不渲染，跑完统一落库。
     private var backgroundRaw: [UUID: String] = [:]
@@ -1378,9 +1380,50 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
             return true
         }
 
+        if url.scheme == "sprig-search" {
+            presentSearchSources(from: url)
+            return true
+        }
+
         // 搜索来源这类普通链接：交给系统用默认浏览器打开
         NSWorkspace.shared.open(url)
         return true
+    }
+
+    /// 点搜索提示行：在鼠标位置弹一个来源列表，标题可点直接开原文
+    private func presentSearchSources(from url: URL) {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let index = Int(url.host ?? ""),
+              let cardID = components.queryItems?.first(where: { $0.name == "card" })?.value,
+              let uuid = UUID(uuidString: cardID),
+              let reports = searchResults[uuid], index < reports.count else { return }
+
+        let report = reports[index]
+        guard !report.items.isEmpty else { return }
+
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        for item in report.items {
+            let title = item.host.map { "\(item.title)  ·  \($0)" } ?? item.title
+            let entry = NSMenuItem(title: title,
+                                   action: #selector(openSearchSource(_:)),
+                                   keyEquivalent: "")
+            entry.target = self
+            if let link = URL(string: item.url) {
+                entry.representedObject = link
+                entry.toolTip = item.summary
+            } else {
+                // 没有有效链接就置灰，别让用户点了没反应
+                entry.isEnabled = false
+            }
+            menu.addItem(entry)
+        }
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+    }
+
+    @objc private func openSearchSource(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        NSWorkspace.shared.open(url)
     }
 
     private func handleEscape() {

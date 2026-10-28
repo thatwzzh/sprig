@@ -35,6 +35,16 @@ enum Theme {
     static let answerFontPointSize: CGFloat = 13.5
 
     /// 段落样式：流式时每个 chunk 追加都要用，做成常量避免反复分配
+    /// 搜索提示行用：段前段后都不留白，行距也压到最小，
+    /// 否则一行提示会和正文之间空出一大块。
+    static let searchLineParagraph: NSParagraphStyle = {
+        let style = NSMutableParagraphStyle()
+        style.lineSpacing = 2
+        style.paragraphSpacing = 0
+        style.paragraphSpacingBefore = 0
+        return style
+    }()
+
     static let answerParagraph: NSParagraphStyle = {
         let style = NSMutableParagraphStyle()
         style.lineSpacing = 4

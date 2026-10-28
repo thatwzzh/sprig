@@ -119,6 +119,19 @@ final class AnswerTextView: NSTextView {
         return components.url
     }
 
+    /// 搜索提示行：整行可点，点开看来源。用紧凑段落样式，不吃正文的段间距。
+    func appendSearchLine(_ text: String, url: URL) {
+        guard let storage = textStorage else { return }
+        var attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 12.5),
+            .foregroundColor: NSColor.secondaryLabelColor,
+            .paragraphStyle: Theme.searchLineParagraph,
+            .link: url,
+        ]
+        attributes[.cursor] = NSCursor.pointingHand
+        storage.append(NSAttributedString(string: text, attributes: attributes))
+    }
+
     /// 联网搜索的来源列表：标题可点（打开原文），后面跟域名。
     /// 不用 `append(text:term:)` 是因为这里要混排三种属性（灰点、链接、暗色域名）。
     func appendSearchItems(_ items: [SearchItem]) {
