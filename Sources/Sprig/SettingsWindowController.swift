@@ -86,7 +86,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         contentView.addSubview(localURLField)
 
         localSyncButton.target = self
-        localSyncButton.action = #selector(syncModelsTapped)
+        localSyncButton.action = #selector(syncLocalModels)
         localSyncButton.bezelStyle = .rounded
         localSyncButton.controlSize = .small
         localSyncButton.font = .systemFont(ofSize: 12)
@@ -144,7 +144,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         contentView.addSubview(orHelp)
 
         syncFreeButton.target = self
-        syncFreeButton.action = #selector(syncModelsTapped)
+        syncFreeButton.action = #selector(syncFreeModels)
         syncFreeButton.bezelStyle = .rounded
         syncFreeButton.controlSize = .small
         syncFreeButton.font = .systemFont(ofSize: 12)
@@ -531,59 +531,34 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
     // MARK: - 拉取 / 测试
 
     /// 打开「去哪里领 Key」的页面
-    /// 本地和免费共用一个同步动作：本地列本机已 pull 的，免费列接口返回的
-    @objc private func syncModelsTapped() {
+    /// 本地按钮：只刷本地清单，不碰免费
+    @objc private func syncLocalModels() {
         localSyncButton.isEnabled = false
-        syncFreeButton.isEnabled = false
         localModelsLabel.stringValue = "同步中…"
-        freeModelsLabel.stringValue = "同步中…"
-
         Task { @MainActor in
-            let ok = await Settings.syncFreeModels()
+            let result = await Settings.syncModels(in: .local)
             localSyncButton.isEnabled = true
-            syncFreeButton.isEnabled = true
-
-            guard ok else {
-                localModelsLabel.stringValue = "失败"
-                freeModelsLabel.stringValue = "拉取失败，检查网络 / Key"
+            guard result.total > 0 else {
+                localModelsLabel.stringValue = "失败，确认 ollama 在跑"
                 return
             }
             loadLocalFields()
+        }
+    }
+
+    /// 免费按钮：只刷 Gemini / OpenRouter，不碰本地
+    @objc private func syncFreeModels() {
+        syncFreeButton.isEnabled = false
+        freeModelsLabel.stringValue = "同步中…"
+        Task { @MainActor in
+            let result = await Settings.syncModels(in: .free)
+            syncFreeButton.isEnabled = true
+            guard result.total > 0 else {
+                freeModelsLabel.stringValue = "失败，检查网络 / Key"
+                return
+            }
             loadFreeFields()
-            // 清单里混着下架、无权限、限流的模型，拉完立刻探一遍，
-            // 否则用户第一次提问才会发现某个模型用不了
-            await probeFreeModels()
-        }
-    }
-
-    /// 这个按钮在「自定义」区域里，测的就是当前编辑的那条自定义配置。
-    /// 之前测的是 Settings.activeConfig（当前正在用的接入），和按钮位置对不上——
-    /// 用户改了半天自定义配置，点测试却在测免费模型。
-    /// 逐个探活拉回来的免费模型
-    private func probeFreeModels() async {
-        // 两条免费接入都可能刚拉过清单，逐条探
-        for config in [geminiConfig, openRouterConfig].compactMap({ $0 }) {
-            guard let models = config.cachedModels, !models.isEmpty else { continue }
-            await probeOne(config: config, models: models)
-        }
-    }
-
-    private func probeOne(config: ProviderConfig, models: [String]) async {
-
-        freeModelsLabel.stringValue = "测试 \(models.count) 个模型…"
-        let results = await ModelProbe.probe(models: models, config: config)
-
-        let usable = results.filter(\.ok).count
-        let quota = results.filter(\.isQuotaIssue).count
-        let broken = results.count - usable - quota
-
-        var summary = "\(models.count) 个模型：\(usable) 可用"
-        if broken > 0 { summary += "、\(broken) 不通" }
-        if quota > 0 { summary += "、\(quota) 限流" }
-        freeModelsLabel.stringValue = summary
-
-        for result in results where !result.ok {
-            print("[probe] \(config.displayName) \(result.model) → \(result.summary)")
+            freeModelsLabel.stringValue = "\(result.usable)/\(result.total) 可用"
         }
     }
 

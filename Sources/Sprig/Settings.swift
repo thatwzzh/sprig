@@ -312,44 +312,67 @@ enum Settings {
         return Date().timeIntervalSince(last) >= 24 * 60 * 60
     }
 
-    /// 拉取并维护 OpenRouter 免费接入。
-    /// 已存在这条接入时只做维护：当前选的模型如果下架了就换成清单里的第一个，否则不动用户的选择。
-    /// 返回是否成功拿到清单（网络失败不算异常，静默返回 false）。
-    @discardableResult
+    /// 同步某个分类下的模型清单（本地 / 免费各管各的，互不影响）。
+    ///
+    /// 拉完立刻探一遍：只把真正能调通的写回 cachedModels。
+    /// 429 算「暂时不可用」但仍然保留——那是上游容量问题，过几分钟就好，
+    /// 剔掉会让列表反复抖动；404/403/400 这类是模型本身没了或没权限，直接剔除。
     @MainActor
-    static func syncFreeModels() async -> Bool {
+    @discardableResult
+    static func syncModels(in category: ProviderConfig.Category) async -> (total: Int, usable: Int) {
         var configs = providerConfigs
-        var updated = false
         var total = 0
+        var usable = 0
+        var touched = false
 
-        // 本地和免费都要维护清单：本地列本机已 pull 的，免费列接口返回的
-        for index in configs.indices
-        where configs[index].resolvedCategory == .free || configs[index].resolvedCategory == .local {
-            let models = await fetchFreeModels(for: configs[index])
+        for index in configs.indices where configs[index].resolvedCategory == category {
+            let config = configs[index]
+            let models = await fetchFreeModels(for: config)
             guard !models.isEmpty else { continue }
+            total = models.count
 
-            configs[index].category = .free
-            configs[index].cachedModels = models
-            if !models.contains(configs[index].model) {
-                configs[index].model = models[0]
+            // 只有 OpenAI 兼容能这样探活。Gemini 的接口形状不同，
+            // 逐个探会把免费额度打光；Ollama 的模型就在本机，不存在调不通。
+            var keep = models
+            if config.kind == .openAICompatible {
+                let results = await ModelProbe.probe(models: models, config: config)
+                let good = results.filter { $0.ok || $0.isQuotaIssue }.map(\.model)
+                // 一个都没通过说明这次探测本身有问题，别把清单清空
+                if !good.isEmpty { keep = good }
+                usable = keep.count
+                for result in results where !result.ok {
+                    print("[sync] \(config.displayName) \(result.model) → \(result.summary)")
+                }
+            } else {
+                usable = keep.count
+            }
+
+            configs[index].category = category
+            configs[index].cachedModels = keep
+            if !keep.contains(configs[index].model) {
+                configs[index].model = keep[0]
             }
             if configs[index].name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 configs[index].name = configs[index].kind.title
             }
-            total += models.count
-            updated = true
+            touched = true
         }
 
-        guard updated else { return false }
+        guard touched else { return (0, 0) }
         providerConfigs = configs
         UserDefaults.standard.set(Date(), forKey: freeModelsLastSyncKey)
-        UserDefaults.standard.set(total, forKey: freeModelsCountKey)
-        return true
+        UserDefaults.standard.set(usable, forKey: freeModelsCountKey)
+        return (total, usable)
     }
 
-    /// 拉某条免费配置的可用模型清单。
-    /// Gemini 只有 flash 系有免费额度（pro 要付费），所以这里按名字滤一下；
-    /// OpenRouter 靠 pricing 判断，再剔掉不能对话的（音乐生成、审核模型）。
+    /// 启动时用：本地和免费都刷一遍
+    @discardableResult
+    static func syncAllModels() async -> Bool {
+        let local = await syncModels(in: .local)
+        let free = await syncModels(in: .free)
+        return local.total + free.total > 0
+    }
+
     @MainActor
     private static func fetchFreeModels(for config: ProviderConfig) async -> [String] {
         switch config.kind {

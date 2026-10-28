@@ -98,20 +98,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if arguments.contains("--probe-free") {
             Task { @MainActor in
-                _ = await Settings.syncFreeModels()
+                let synced = await Settings.syncModels(in: .free)
+                print("[probe-free] 拉取 \(synced.total) 个，可用 \(synced.usable) 个")
                 for config in Settings.providerConfigs where config.resolvedCategory == .free {
-                    guard let models = config.cachedModels, !models.isEmpty else {
-                        print("=== \(config.displayName)：没有模型清单 ===")
-                        continue
-                    }
-                    print("=== \(config.displayName)（\(models.count) 个）===")
-                    let results = await ModelProbe.probe(models: models, config: config)
-                    for result in results {
-                        print(result.ok ? "  ✓ \(result.model)"
-                                        : "  ✗ \(result.model) → \(result.summary)")
-                    }
-                    let usable = results.filter(\.ok).count
-                    print("  小结：\(usable)/\(results.count) 可用")
+                    let models = config.cachedModels ?? []
+                    guard !models.isEmpty else { continue }
+                    print("=== \(config.displayName)：剩 \(models.count) 个 ===")
+                    for model in models { print("  ✓ \(model)") }
                 }
                 NSApp.terminate(nil)
             }
@@ -199,14 +192,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupFreeModelRefresh() {
         Task {
             guard Settings.needsFreeModelSync else { return }
-            let ok = await Settings.syncFreeModels()
-            print("[freeModels] 同步\(ok ? "成功" : "失败")，可用 \(Settings.freeModelsCount) 个")
+            let ok = await Settings.syncAllModels()
+            print("[models] 同步\(ok ? "成功" : "失败")，可用 \(Settings.freeModelsCount) 个")
         }
 
         let timer = Timer(timeInterval: 60 * 60, repeats: true) { _ in
             Task { @MainActor in
                 guard Settings.needsFreeModelSync else { return }
-                await Settings.syncFreeModels()
+                await Settings.syncAllModels()
             }
         }
         // .common 模式：菜单跟踪、窗口拖动期间也能触发
