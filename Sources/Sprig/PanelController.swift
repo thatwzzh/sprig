@@ -504,8 +504,9 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         menu.autoenablesItems = false
 
         for category in ProviderConfig.Category.allCases {
+            // 没填 key / 没填模型的不进菜单：点不动，只会让列表变长
             let group = configs
-                .filter { $0.resolvedCategory == category }
+                .filter { $0.resolvedCategory == category && $0.isConfigured }
                 .sorted { (a: ProviderConfig, b: ProviderConfig) in a.freeSortRank < b.freeSortRank }
             guard !group.isEmpty else { continue }
 
@@ -520,6 +521,13 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
                                            isActive: config.id == activeID && model == activeModel))
                 }
             }
+            menu.addItem(.separator())
+        }
+
+        if menu.items.isEmpty {
+            let empty = NSMenuItem(title: "还没有可用的模型，先去设置里填 Key", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            menu.addItem(empty)
             menu.addItem(.separator())
         }
 
