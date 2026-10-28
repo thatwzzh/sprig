@@ -144,19 +144,19 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         syncFreeButton.bezelStyle = .rounded
         syncFreeButton.controlSize = .small
         syncFreeButton.font = .systemFont(ofSize: 12)
-        syncFreeButton.frame = NSRect(x: 120, y: 484, width: 104, height: 26)
+        syncFreeButton.frame = NSRect(x: 24, y: 484, width: 104, height: 26)
         syncFreeButton.toolTip = "从接口拉取当前可用的免费模型（每天自动刷新）"
         contentView.addSubview(syncFreeButton)
 
         freeModelsLabel.font = .systemFont(ofSize: 11)
         freeModelsLabel.textColor = .secondaryLabelColor
         freeModelsLabel.lineBreakMode = .byTruncatingTail
-        freeModelsLabel.frame = NSRect(x: 232, y: 489, width: 244, height: 16)
+        freeModelsLabel.frame = NSRect(x: 136, y: 489, width: 340, height: 16)
         contentView.addSubview(freeModelsLabel)
 
         // ── 自定义 ──
         addGroupTitle("自定义 · 填 Base URL 和 Key，给配置起个名", y: 456, to: contentView)
-        customPopUp.frame = NSRect(x: 120, y: 426, width: 200, height: 26)
+        customPopUp.frame = NSRect(x: 24, y: 426, width: 296, height: 26)
         customPopUp.target = self
         customPopUp.action = #selector(customSelectionChanged)
         contentView.addSubview(customPopUp)
@@ -202,13 +202,13 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         testButton.bezelStyle = .rounded
         testButton.controlSize = .small
         testButton.font = .systemFont(ofSize: 12)
-        testButton.frame = NSRect(x: 24, y: 364, width: 88, height: 26)
+        testButton.frame = NSRect(x: 24, y: 364, width: 104, height: 26)
         contentView.addSubview(testButton)
 
         statusLabel.font = .systemFont(ofSize: 11)
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.lineBreakMode = .byTruncatingTail
-        statusLabel.frame = NSRect(x: 120, y: 369, width: 262, height: 16)
+        statusLabel.frame = NSRect(x: 136, y: 369, width: 340, height: 16)
         contentView.addSubview(statusLabel)
 
         addSeparator(y: 336, to: contentView)
@@ -507,7 +507,6 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
             if let fallback { Settings.selectProvider(id: fallback.id) }
         }
         loadCustomFields()
-        statusLabel.stringValue = "已删除「\(config.displayName)」"
     }
 
     // MARK: - 拉取 / 测试
@@ -518,7 +517,6 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         persistLocal()
         guard let config = localConfig else { return }
 
-        statusLabel.stringValue = "读取本机模型…"
         fetchButton.isEnabled = false
 
         Task { @MainActor in
@@ -527,10 +525,13 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
             fetchButton.isEnabled = true
 
             guard !models.isEmpty else {
-                statusLabel.stringValue = "没读到模型，确认 ollama serve 在跑"
+                // 状态栏只用来显示测试结果，拉取失败的提示走弹窗
+                let alert = NSAlert()
+                alert.messageText = "没读到本地模型"
+                alert.informativeText = "确认 ollama serve 在跑，地址填对了（当前：\(config.baseURL)）。"
+                alert.runModal()
                 return
             }
-            statusLabel.stringValue = "\(models.count) 个本地模型"
             presentModelMenu(models)
         }
     }
