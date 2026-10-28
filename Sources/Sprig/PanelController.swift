@@ -607,8 +607,15 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
 
         // 回退到父卡位置再挂子卡，避免在祖先链之外分叉
         stack.removeSubrange((parentIndex + 1)...)
+
+        // 按模型真实窗口算预算；开了联网搜索就先扣掉一轮搜索的空间
+        let activeConfig = Settings.activeConfig
+        let policy = ContextAssembler.Policy.dynamic(
+            contextTokens: activeConfig.contextLength,
+            isLocal: activeConfig.kind.isLocal,
+            toolReserve: Settings.webSearchReady ? 3_000 : 0)
         let context = ContextAssembler.context(path: contextPath(upTo: parentIndex),
-                                               policy: .forLocal(Settings.provider.isLocal))
+                                               policy: policy)
 
         let card = AnswerCard(parentID: parentID,
                               title: title,

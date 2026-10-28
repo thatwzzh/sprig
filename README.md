@@ -166,7 +166,7 @@ qwen3 > gemma-4-31b > nemotron-3-super > 星辰 > minimax > inkling-small > ligh
 最多 3 轮，防止模型反复搜同一个词。搜索动作会写进答案（`🔍 搜索「…」`），你能看到答案基于什么。
 
 **结果拼装**：两个后端统一成「标题 / 来源 / 摘要」，摘要截到 600 字——5 条约 3000 字，
-再多会把卡片上下文挤掉（`ContextAssembler` 的预算不含搜索结果）。DeepSeek 优先用它的 `summary`
+再多会把卡片上下文挤掉——`ContextAssembler` 会按 `toolReserve` 先扣掉这部分空间。DeepSeek 优先用它的 `summary`
 字段（600–800 字，本来就是给模型读的），并按 `rerank_score ≥ 1.5` 过滤低质结果。
 
 **只对「OpenAI 兼容」接入生效**。Ollama 和 Gemini 走的是协议里的默认实现，传了 tools 也只会当普通对话处理。
@@ -213,7 +213,7 @@ Sprig/
 │   ├── SprigCore/                 # 无 UI 依赖，可单测
 │   │   ├── AnswerCard.swift       # 卡片模型（id/parentID/title/question/answer/selectedText）
 │   │   ├── CardStore.swift        # actor，JSON 持久化 + 树操作（children/path/rename/delete）
-│   │   ├── ContextAssembler.swift # 上下文预算装配（本地/线上两套 Policy）
+│   │   ├── ContextAssembler.swift # 上下文预算装配（按模型窗口动态算 + 工具预留）
 │   │   ├── TermParser.swift       # ⟦术语⟧ 流式状态机
 │   │   ├── Prompt.swift           # 系统提示词与子卡消息模板
 │   │   ├── LLMProvider.swift      # provider 协议（id / displayName / isLocal / stream）

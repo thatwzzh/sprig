@@ -117,14 +117,40 @@ enum Settings {
         activeProviderID = id
     }
 
+    /// 老配置里没有 contextLength 字段，按 kind 能确定的补上。
+    /// 不补的话，用云端模型时上下文预算会退回保守的 12000 字，白白浪费窗口。
+    static func backfillContextLengths() {
+        var configs = providerConfigs
+        var changed = false
+        for index in configs.indices where configs[index].contextLength == nil {
+            guard let known = configs[index].kind.knownContextLength else { continue }
+            configs[index].contextLength = known
+            changed = true
+        }
+        guard changed else { return }
+        providerConfigs = configs
+    }
+
     /// 把探测到的 Ollama 模型写进内置 Ollama 项。
     /// 只在用户没手动改过（仍是默认模型名）时生效，避免覆盖用户设置。
-    static func adoptDetectedOllamaModels(_ models: [String]) {
+    static func adoptDetectedOllamaModels(_ models: [String], contextLengths: [String: Int] = [:]) {
         guard let preferred = models.first(where: { $0.hasPrefix("qwen3") }) ?? models.first else { return }
         var configs = providerConfigs
-        guard let index = configs.firstIndex(where: { $0.kind == .ollama }),
-              configs[index].model == ProviderConfig.Kind.ollama.defaultModel else { return }
-        configs[index].model = preferred
+        guard let index = configs.firstIndex(where: { $0.kind == .ollama }) else { return }
+
+        var changed = false
+        // 模型名只在还是出厂默认时替换，别覆盖用户自己选的
+        if configs[index].model == ProviderConfig.Kind.ollama.defaultModel {
+            configs[index].model = preferred
+            changed = true
+        }
+        // 上下文窗口缺失就补上；已知的不覆盖
+        if configs[index].contextLength == nil,
+           let context = contextLengths[configs[index].model] {
+            configs[index].contextLength = context
+            changed = true
+        }
+        guard changed else { return }
         providerConfigs = configs
     }
 
@@ -210,6 +236,11 @@ enum Settings {
 
     /// 超过一天就该重新拉一次
     static var needsFreeModelSync: Bool {
+        // 接入在但缺窗口信息，也补一次——不然上下文预算会退回保守值
+        if let index = providerConfigs.firstIndex(where: { $0.id == ProviderConfig.builtinOpenRouterFreeID }),
+           providerConfigs[index].contextLength == nil {
+            return true
+        }
         guard let last = freeModelsLastSync else { return true }
         return Date().timeIntervalSince(last) >= 24 * 60 * 60
     }
@@ -225,17 +256,25 @@ enum Settings {
         }
 
         var configs = providerConfigs
+        let preferred = FreeModelCatalog.preferred(from: models)
+
         if let index = configs.firstIndex(where: { $0.id == ProviderConfig.builtinOpenRouterFreeID }) {
             let inList = models.contains { $0.id == configs[index].model }
-            if !inList {
-                configs[index].model = FreeModelCatalog.preferred(from: models)?.id ?? models[0].id
+            if !inList, let preferred {
+                configs[index].model = preferred.id
+                configs[index].contextLength = preferred.contextLength
+            } else if configs[index].contextLength == nil,
+                      let current = models.first(where: { $0.id == configs[index].model }) {
+                // 之前没记窗口的，这次补上
+                configs[index].contextLength = current.contextLength
             }
             // 名字被用户改过就不覆盖
             if configs[index].name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 configs[index].name = "OpenRouter 免费"
             }
-        } else {
-            configs.append(ProviderConfig.openRouterFree(model: FreeModelCatalog.preferred(from: models)?.id ?? models[0].id))
+        } else if let preferred {
+            configs.append(ProviderConfig.openRouterFree(model: preferred.id,
+                                                         contextLength: preferred.contextLength))
         }
 
         providerConfigs = configs

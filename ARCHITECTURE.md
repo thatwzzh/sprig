@@ -66,7 +66,7 @@ UI 层不直接读文件，Core 层不 import AppKit——这条边界让「解�
 | `PointerCursor` | 指针样式 | 可点击控件 hover 显示手型光标（`PointerButton`） |
 | `ModelPickerButton` | 模型切换 | 输入框右侧胶囊，固定宽度避免文字换行导致布局抖动 |
 | `TermParser` | 流式解析 | 未闭合持有、换行/超长降级、嵌套重开 |
-| `ContextAssembler` | 上下文 | 本地/线上两套预算策略 |
+| `ContextAssembler` | 上下文 | 按模型真实窗口动态算预算（本地固定紧预算）；预留搜索结果空间；按句子边界截断 |
 | `CardStore` | 存储 | `actor`，JSON 原子写入；删除级联 |
 | `ProviderConfig` | 接入配置 | 名称/协议/Base URL/API Key/模型，Codable 存 UserDefaults |
 | `OllamaProvider` | 模型 | NDJSON；`think:false`、`num_ctx:8192`、`keep_alive:30m` |
@@ -122,7 +122,7 @@ fallback：把已缓冲内容当正文输出，并吞掉后到的 ⟧
       选区 ≤120 字 且与答案区相交 → 浮出 [解释][追问]
   → 解释：createChildCard(parentID: 当前卡, selection: 选中文本, question: "")
       1) 截断栈到父卡位置（避免在祖先链之外分叉）
-      2) ContextAssembler.context(path: 祖先链, policy: .forProvider(id))
+      2) ContextAssembler.context(path: 祖先链, policy: .dynamic(窗口, isLocal, toolReserve))
       3) 新卡压栈 → 流式（system(contextual) + user(上下文 + 片段)）
   → 追问：预填「关于「…」：」，提交时同样走 createChildCard
 ```
@@ -161,20 +161,38 @@ struct AnswerCard {
 
 ## 6. 上下文装配
 
-`ContextAssembler.Policy` 按「本地 / 线上」分两套预算（单位：字符）。
-判断依据是 `LLMProvider.isLocal`——Ollama 为 true，其余为 false。用布尔值而不是 provider id，
-是因为接入配置的主键是 UUID，按字符串匹配会在用户新增接入后失效：
+预算按**模型的真实上下文窗口**算，拿不到窗口才退回保守默认（单位：字符）。
 
-| 参数 | 本地（Ollama） | 线上 |
+窗口来源：
+
+| provider | 来源 | 实测 |
 |---|---|---|
-| 总预算 | 2400 | 12000 |
-| 当前回答 | 1200 | 6000 |
-| 直接父级 | 600 | 3000 |
-| 更远祖先 | 0（只留标题+问题） | 800 |
+| Gemini | 内置已知值 | 1,048,576 |
+| Ollama | `/api/tags` 的 `details.context_length` | 262,144 |
+| OpenRouter | 模型清单的 `context_length` | 262,144 |
+| OpenAI / DeepSeek / 自定义网关 | 拿不到，用默认 128k 估算 | — |
+
+算法在 `Policy.dynamic`：`min(max(窗口/3, 4000), 30000)`。上限 30000 是因为再长首字延迟和
+token 费用都上去了，对问答的边际收益很低；下限 4000 兜住小窗口模型。
+
+**本地模型不参与窗口计算**，固定用 `.local` 那套。原因不是窗口（qwen3.5:9b 也有 262k），
+而是 9B 级模型喂太长质量会明显下降——窗口大不代表能用满。
+
+| 参数 | 本地（Ollama） | 线上（动态） |
+|---|---|---|
+| 总预算 | 2400 | 窗口/3，夹在 4000–30000 |
+| 当前回答 | 1200 | 总预算的一半 |
+| 直接父级 | 600 | 总预算/4，上限 6000 |
+| 更远祖先 | 0（只留标题+问题） | 总预算/15，上限 1500 |
 | 祖先层数 | 4 | 12 |
 
 分配顺序是「由近到远」：当前卡必须完整（它是被解释的对象），父级给因果，更远的只留问题行。
-本地砍得更狠，因为 8k 窗口还要留给回答，且小模型对长输入更敏感。
+
+**工具预留**：`Policy.toolReserve` 在装配时先扣掉。联网搜索的结果是流式循环里额外追加的消息，
+装配器看不见，不预留的话卡片上下文和搜索结果会叠加撑爆窗口。开启联网时预留 3000 字（一轮典型搜索量）。
+
+**截断**：`truncate` 优先落在段落换行，其次句末标点，只能保住 50%/60% 以上才接受，否则硬切。
+硬 `prefix` 会把结尾砍掉，而结论往往就在最后一句。
 
 输出形如：
 
@@ -269,7 +287,7 @@ total = inputHeight(46…96)
 
 - `TermParser`：分片、跨块标记、未闭合持有、换行/超长降级、空术语、多术语。
 - `CardStore`：树操作、路径、重命名、级联删除、JSON 往返。
-- `ContextAssembler`：本地/线上预算差异、由近到远分配、当前问题必须进上下文。
+- `ContextAssembler`：按窗口动态算预算、工具预留挤占祖先、句子边界截断、由近到远分配。
 
 UI 无法截图时的替代方案（本机没有屏幕录制权限）：
 

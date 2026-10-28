@@ -113,4 +113,27 @@ extension OllamaProvider {
             return []
         }
     }
+
+    /// 模型 → 上下文窗口。`/api/tags` 的 `details.context_length` 是模型自带的最大值，
+    /// 拿去算上下文预算比用固定默认值准得多。
+    public static func contextLengths(baseURL: URL = URL(string: "http://127.0.0.1:11434")!) async -> [String: Int] {
+        var request = URLRequest(url: baseURL.appendingPathComponent("api/tags"))
+        request.timeoutInterval = 2
+        do {
+            let (data, _) = try await URLSession.shared.data(for: request)
+            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let models = object["models"] as? [[String: Any]] else { return [:] }
+            var result: [String: Int] = [:]
+            for item in models {
+                guard let name = item["name"] as? String,
+                      let details = item["details"] as? [String: Any],
+                      let length = details["context_length"] as? Int,
+                      length > 0 else { continue }
+                result[name] = length
+            }
+            return result
+        } catch {
+            return [:]
+        }
+    }
 }

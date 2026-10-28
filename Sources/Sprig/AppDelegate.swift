@@ -14,6 +14,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Settings.migrateLegacyDefaultsIfNeeded()
         // 默认知识库目录改成 ~/Documents/Sprig，把老默认位置的数据带过来
         Settings.prepareCardsDirectory()
+        // 老配置没有 contextLength 字段，按 kind 补一次；Ollama/OpenRouter 的真实值靠后面的探测和同步
+        Settings.backfillContextLengths()
 
         setupMainMenu()
         setupStatusItem()
@@ -61,10 +63,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task.detached {
             guard let ollama = Settings.providerConfigs.first(where: { $0.kind == .ollama }),
                   let base = URL(string: ollama.baseURL) else { return }
-            let models = await OllamaProvider.availableModels(baseURL: base)
+            // 顺带拿模型的真实上下文窗口，上下文预算按它算比用固定值准
+            async let names = OllamaProvider.availableModels(baseURL: base)
+            async let lengths = OllamaProvider.contextLengths(baseURL: base)
+            let (models, contexts) = await (names, lengths)
             guard !models.isEmpty else { return }
             await MainActor.run {
-                Settings.adoptDetectedOllamaModels(models)
+                Settings.adoptDetectedOllamaModels(models, contextLengths: contexts)
             }
         }
 

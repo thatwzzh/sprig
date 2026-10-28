@@ -41,6 +41,14 @@ public struct ProviderConfig: Codable, Identifiable, Sendable, Equatable {
         /// 本地模型上下文窗口小、对长输入更敏感，用紧一点的上下文预算
         public var isLocal: Bool { self == .ollama }
 
+        /// 能确定的窗口大小。Ollama 靠探测、OpenAI 兼容各家不同，都返回 nil。
+        public var knownContextLength: Int? {
+            switch self {
+            case .gemini: return 1_048_576   // gemini-2.5-flash
+            case .ollama, .openAICompatible: return nil
+            }
+        }
+
         /// 设置页里 Base URL / 模型的输入提示
         public var baseURLHint: String {
             switch self {
@@ -66,6 +74,9 @@ public struct ProviderConfig: Codable, Identifiable, Sendable, Equatable {
     public var model: String
     /// 内置项不允许删除
     public var isBuiltin: Bool
+    /// 模型的上下文窗口（token 数）。nil = 未知，装配上下文时用保守默认。
+    /// 可选字段，旧数据解码出来就是 nil，不需要迁移。
+    public var contextLength: Int?
 
     public init(id: UUID = UUID(),
                 name: String,
@@ -73,7 +84,8 @@ public struct ProviderConfig: Codable, Identifiable, Sendable, Equatable {
                 baseURL: String,
                 apiKey: String = "",
                 model: String,
-                isBuiltin: Bool = false) {
+                isBuiltin: Bool = false,
+                contextLength: Int? = nil) {
         self.id = id
         self.name = name
         self.kind = kind
@@ -81,6 +93,7 @@ public struct ProviderConfig: Codable, Identifiable, Sendable, Equatable {
         self.apiKey = apiKey
         self.model = model
         self.isBuiltin = isBuiltin
+        self.contextLength = contextLength
     }
 
     public var displayName: String {
@@ -143,7 +156,9 @@ public extension ProviderConfig {
                            kind: .gemini,
                            baseURL: Kind.gemini.defaultBaseURL,
                            model: Kind.gemini.defaultModel,
-                           isBuiltin: true),
+                           isBuiltin: true,
+                           // gemini-2.5-flash 是 1M 窗口，这是内置项里少数能确定的值
+                           contextLength: 1_048_576),
             ProviderConfig(id: builtinOllamaID,
                            name: "Ollama 本地",
                            kind: .ollama,
@@ -155,13 +170,14 @@ public extension ProviderConfig {
 
     /// OpenRouter 免费模型接入。由 `Settings.syncFreeModels()` 自动创建并每日维护。
     /// 标成内置是为了让每日同步幂等：用户不会把它删掉、第二天又冒出来。
-    public static func openRouterFree(model: String) -> ProviderConfig {
+    public static func openRouterFree(model: String, contextLength: Int? = nil) -> ProviderConfig {
         ProviderConfig(id: builtinOpenRouterFreeID,
                        name: "OpenRouter 免费",
                        kind: .openAICompatible,
                        baseURL: FreeModelCatalog.openRouterBaseURL,
                        model: model,
-                       isBuiltin: true)
+                       isBuiltin: true,
+                       contextLength: contextLength)
     }
 
     /// 这条接入该去哪里领 API Key。设置页据此显示可点的「去获取」。
