@@ -350,7 +350,8 @@ enum Settings {
             // 只有 OpenAI 兼容能这样探活。Gemini 的接口形状不同，
             // 逐个探会把免费额度打光；Ollama 的模型就在本机，不存在调不通。
             var keep = models
-            if config.kind == .openAICompatible {
+            let isZhipu = config.baseURL.lowercased().contains("bigmodel")
+            if config.kind == .openAICompatible && !isZhipu {
                 let results = await ModelProbe.probe(models: models, config: config)
                 let good = results.filter { $0.ok || $0.isQuotaIssue }.map(\.model)
                 // 一个都没通过说明这次探测本身有问题，别把清单清空
@@ -405,6 +406,11 @@ enum Settings {
                 return !blocked.contains { lower.contains($0) }
             }
         case .openAICompatible:
+            // 智谱的 /models 只返回付费型号（glm-4.5 ~ glm-5.3），
+            // 真正免费的 glm-4.7-flash 不在里面。硬编码，别让同步把用户切到要钱的模型。
+            if config.baseURL.lowercased().contains("bigmodel") {
+                return ["glm-4.7-flash"]
+            }
             // 只有 OpenRouter 走它那套「免费清单 + 非对话模型过滤」。
             // 其他 OpenAI 兼容网关（智谱等）走标准的 /models —— 之前一律按
             // OpenRouter 处理，导致智谱拉回了 OpenRouter 的模型名。
