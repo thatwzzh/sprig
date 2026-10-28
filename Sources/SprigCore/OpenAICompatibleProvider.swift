@@ -270,7 +270,7 @@ public struct OpenAICompatibleProvider: LLMProvider {
         if path.hasSuffix("/chat/completions") { return baseURL }
 
         var url = baseURL
-        if !path.hasSuffix("/v1") {
+        if !Self.hasVersionPrefix(path) {
             url.appendPathComponent("v1")
         }
         return url.appendingPathComponent("chat/completions")
@@ -296,11 +296,18 @@ public struct ModelOption: Sendable, Equatable {
 public extension OpenAICompatibleProvider {
     /// 拉模型列表并标出免费项。OpenRouter 的 `/v1/models` 带 pricing，
     /// prompt 和 completion 都为 0 就是免费；OpenAI 官方接口没有 pricing，全是 false。
+    /// baseURL 是否已经带 API 版本前缀（/v1、/v3、/v4…）。
+    /// 智谱是 /api/paas/v4，再补一个 /v1 就变成 /v4/v1/models，必然 404。
+    private static func hasVersionPrefix(_ path: String) -> Bool {
+        guard let last = path.split(separator: "/").last else { return false }
+        return last.count >= 2 && last.hasPrefix("v") && last.dropFirst().allSatisfy(\.isNumber)
+    }
+
     static func modelOptions(baseURL: URL, apiKey: String) async -> [ModelOption] {
         var path = baseURL.path
         while path.hasSuffix("/") { path.removeLast() }
         var url = baseURL
-        if !path.hasSuffix("/v1") { url.appendPathComponent("v1") }
+        if !hasVersionPrefix(path) { url.appendPathComponent("v1") }
         url.appendPathComponent("models")
 
         var request = URLRequest(url: url)
@@ -378,7 +385,7 @@ public extension OpenAICompatibleProvider {
         var path = baseURL.path
         while path.hasSuffix("/") { path.removeLast() }
         var url = baseURL
-        if !path.hasSuffix("/v1") { url.appendPathComponent("v1") }
+        if !hasVersionPrefix(path) { url.appendPathComponent("v1") }
         url.appendPathComponent("models")
 
         var request = URLRequest(url: url)

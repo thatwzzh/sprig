@@ -577,6 +577,8 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
     /// 打开「去哪里领 Key」的页面
     /// 本地按钮：只刷本地清单，不碰免费
     @objc private func syncLocalModels() {
+        // 点按钮时输入框可能还是编辑态，先落盘再同步，否则读到的还是旧值
+        persistLocal()
         localSyncButton.isEnabled = false
         localModelsLabel.stringValue = "同步中…"
         Task { @MainActor in
@@ -592,6 +594,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
 
     /// 免费按钮：只刷 Gemini / OpenRouter，不碰本地
     @objc private func syncFreeModels() {
+        persistFree()
         syncFreeButton.isEnabled = false
         freeModelsLabel.stringValue = "同步中…"
         Task { @MainActor in

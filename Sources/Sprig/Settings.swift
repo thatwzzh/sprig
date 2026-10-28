@@ -405,10 +405,20 @@ enum Settings {
                 return !blocked.contains { lower.contains($0) }
             }
         case .openAICompatible:
-            guard let free = try? await FreeModelCatalog.openRouterFreeModels() else { return [] }
-            return free
-                .filter { !FreeModelCatalog.isNonChatModel($0.id) }
-                .map(\.id)
+            // 只有 OpenRouter 走它那套「免费清单 + 非对话模型过滤」。
+            // 其他 OpenAI 兼容网关（智谱等）走标准的 /models —— 之前一律按
+            // OpenRouter 处理，导致智谱拉回了 OpenRouter 的模型名。
+            if config.baseURL.lowercased().contains("openrouter") {
+                guard let free = try? await FreeModelCatalog.openRouterFreeModels() else { return [] }
+                return free
+                    .filter { !FreeModelCatalog.isNonChatModel($0.id) }
+                    .map(\.id)
+            }
+            let base = URL(string: config.baseURL)
+                ?? URL(string: ProviderConfig.Kind.openAICompatible.defaultBaseURL)!
+            let options = await OpenAICompatibleProvider.modelOptions(baseURL: base,
+                                                                     apiKey: config.apiKey)
+            return options.map(\.id)
         }
     }
 
