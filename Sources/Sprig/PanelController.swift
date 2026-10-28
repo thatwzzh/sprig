@@ -361,9 +361,10 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
                                    width: max(1, Theme.panelWidth - Theme.horizontalInset * 2),
                                    height: max(bottomHeight, 24))
         // 宽高都不该在这里拍板：
-        // - 宽度跟 scrollView 走（autoresizingMask），写死会让文字超出可视区被裁
+        // - 宽度必须每次对齐 scrollView 的可视宽。先前用「当前宽度」会把历史上被设大的值留下来，
+        //   文字就画到面板外面被树盖住（"状态管理核心"的"核"被裁就是这个）
         // - 高度由内容决定（syncHeightToContent），写死会让长答案滚不动
-        let answerWidth = answerView.frame.width > 1 ? answerView.frame.width : Theme.panelWidth
+        let answerWidth = max(1, content.answerScroll.contentSize.width)
         answerView.frame = NSRect(x: 0, y: 0,
                                   width: answerWidth,
                                   height: max(answerView.frame.height, Theme.answerMinHeight))

@@ -290,6 +290,11 @@ final class PanelContentView: NSView {
         // 右边留 8pt：答案文字的行尾紧贴边缘不好读，和分隔线错开也更透气
         answerScroll.frame = NSRect(x: 0, y: bottomHeight + 1,
                                     width: width - 8, height: max(0, top - bottomHeight - 1))
+        // documentView 的 autoresizing 不可靠：窗口变窄后它可能停在旧宽度上，
+        // 于是文字被画到可视区外。这里每次布局都对齐一次。
+        if let doc = answerScroll.documentView, doc.frame.width != answerScroll.contentSize.width {
+            doc.setFrameSize(NSSize(width: answerScroll.contentSize.width, height: doc.frame.height))
+        }
     }
 
     /// NSVisualEffectView 的背景层不跟随 view.layer.cornerRadius，
