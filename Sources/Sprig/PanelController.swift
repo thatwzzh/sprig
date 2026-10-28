@@ -360,11 +360,12 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         bottomInput.frame = NSRect(x: 0, y: 0,
                                    width: max(1, Theme.panelWidth - Theme.horizontalInset * 2),
                                    height: max(bottomHeight, 24))
-        // 宽度跟随面板；高度交给内容决定。
-        // 之前这里直接把高度设成 answerHeight（≤ answerMaxHeight），
-        // 于是超过 420pt 的内容既不显示、也不会产生可滚动区域。
+        // 宽高都不该在这里拍板：
+        // - 宽度跟 scrollView 走（autoresizingMask），写死会让文字超出可视区被裁
+        // - 高度由内容决定（syncHeightToContent），写死会让长答案滚不动
+        let answerWidth = answerView.frame.width > 1 ? answerView.frame.width : Theme.panelWidth
         answerView.frame = NSRect(x: 0, y: 0,
-                                  width: Theme.panelWidth,
+                                  width: answerWidth,
                                   height: max(answerView.frame.height, Theme.answerMinHeight))
         answerView.syncHeightToContent()
 
@@ -887,11 +888,17 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         answerView.clearThinkingPlaceholder()
     }
 
-    /// 流式结束。前台正常收尾；后台只把累积内容落库。
+    /// 流式结束。
+    ///
+    /// 关键：判断「是不是前台」不能用 raw 是否为空——
+    /// 后台跑的任务内容都在 backgroundRaw 里，stack 里的节点还是切走时的旧值。
+    /// 之前这里直接走 finishStreaming()，它看到 stack.raw 为空就报「模型没有返回任何内容」。
     private func finish(owner: UUID) {
+        let buffered = backgroundRaw[owner]
+        backgroundRaw[owner] = nil
+
         guard stack.last?.card.id == owner else {
-            let raw = backgroundRaw[owner] ?? ""
-            backgroundRaw[owner] = nil
+            let raw = buffered ?? ""
             Task { @MainActor in
                 if var card = await CardStore.shared.card(id: owner) {
                     card.answer = raw
@@ -901,6 +908,17 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
                 // 用户可能已经切回这张卡在等：把完整内容画出来
                 self.reloadIfDisplaying(owner)
             }
+            return
+        }
+
+        // 前台：如果这段内容是后台跑完才回到前台的，先把缓冲灌回节点再渲染
+        if let buffered {
+            stack[stack.count - 1].raw = buffered
+            stack[stack.count - 1].card.answer = buffered
+            isStreaming = false
+            renderCurrent()
+            persistCurrentCard()
+            refreshTreeIfVisible()
             return
         }
         finishStreaming()

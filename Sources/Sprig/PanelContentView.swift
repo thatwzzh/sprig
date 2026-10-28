@@ -40,13 +40,11 @@ final class PanelContentView: NSView {
     private(set) var treeVisible = false
 
     /// 左侧问答区的宽度（不含右侧树）
-    private var contentWidth: CGFloat {
-        let available = treeVisible ? bounds.width - Theme.treeWidth : bounds.width
-        // 树刚展开时 bounds 还没跟上（窗口 resize 有一帧延迟），
-        // 那会儿减掉树宽会把内容压到 400 出头、右侧露出空白或直接被树盖住。
-        // 内容区永远至少占一个完整面板宽。
-        return max(Theme.panelWidth, available)
-    }
+    /// 内容区宽度是固定的：面板 = 内容区 680 + 可选的树 264。
+    /// 之前用 bounds.width 推算，窗口 resize 有一帧延迟，
+    /// 那一帧里 bounds 还是旧值，会算出 416 或 944 这种错误宽度，
+    /// 结果就是内容被压窄、或者文字画到面板外面去。
+    private var contentWidth: CGFloat { Theme.panelWidth }
 
     init() {
         super.init(frame: .zero)
@@ -289,8 +287,9 @@ final class PanelContentView: NSView {
                                     width: width - Theme.horizontalInset * 2, height: bottomHeight)
 
         answerScroll.isHidden = false
+        // 右边留 8pt：答案文字的行尾紧贴边缘不好读，和分隔线错开也更透气
         answerScroll.frame = NSRect(x: 0, y: bottomHeight + 1,
-                                    width: width, height: max(0, top - bottomHeight - 1))
+                                    width: width - 8, height: max(0, top - bottomHeight - 1))
     }
 
     /// NSVisualEffectView 的背景层不跟随 view.layer.cornerRadius，
