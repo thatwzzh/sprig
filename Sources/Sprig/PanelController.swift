@@ -749,7 +749,9 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         // 没配搜索就传空数组，provider 走纯文本快路径，行为跟之前一致
         // 降级会换模型，所以这里记配置而不是 provider，每轮现构造
         var activeConfig = Settings.activeConfig
-        let tools: [ToolDefinition] = Settings.webSearchReady ? [WebSearchTool.definition] : []
+        // 时间工具不依赖任何配置，始终可用；搜索要配了 Key 才给
+        var tools: [ToolDefinition] = [TimeTool.definition]
+        if Settings.webSearchReady { tools.append(WebSearchTool.definition) }
         let searchKey = Settings.webSearchAPIKey
         let searchBackend = Settings.searchBackend
         let maxRounds = 3
@@ -820,6 +822,11 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
                     conversation.append(.assistantToolCalls(requested))
 
                     for call in requested {
+                        if call.name == TimeTool.name {
+                            conversation.append(.toolResult(TimeTool.execute(), for: call.id))
+                            continue
+                        }
+
                         let query: String
                         if let parsed = try? WebSearchTool.parseQuery(call.arguments) {
                             query = parsed
