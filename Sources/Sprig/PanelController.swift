@@ -780,6 +780,11 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
                             }
                             break
                         } catch let error as LLMError {
+                            // TLS 抖动 / 连接中断：同一个模型重连一次就够了
+                            if error.isTransient, !produced, fallbackTried < 2 {
+                                fallbackTried += 1
+                                continue
+                            }
                             // 429 是上游池被抢空；404 多半是模型下线（Gemini 换代就是这样）
                             let retryable: Bool
                             switch error {

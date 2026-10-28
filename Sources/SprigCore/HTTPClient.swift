@@ -11,8 +11,8 @@ public enum HTTPClient {
         config.timeoutIntervalForRequest = 300
         config.timeoutIntervalForResource = 900
         config.waitsForConnectivity = false
-        // 流式请求同时只会有 1 条，留一点余量给会话标题之类的旁路请求
-        config.httpMaximumConnectionsPerHost = 4
+        // 面板可以同时挂着好几张卡在后台跑，别把并发卡太死
+        config.httpMaximumConnectionsPerHost = 8
         return URLSession(configuration: config)
     }()
 }

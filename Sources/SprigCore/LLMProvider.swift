@@ -81,6 +81,14 @@ public enum LLMError: LocalizedError, Sendable {
         }
     }
 
+    /// 值得原样重试一次的故障：TLS 握手、连接中断、超时。
+    /// 这类多半是链路瞬抖，重连通常就过了，换模型没有意义（同一个域名）。
+    public var isTransient: Bool {
+        guard case .network(let message) = self else { return false }
+        return message.contains("TLS") || message.contains("连接不上")
+            || message.contains("超时") || message.contains("连接中途")
+    }
+
     /// 把 URLSession 的错误翻译成能照着做的中文。
     /// 直接透 `localizedDescription` 会得到 "The Internet connection appears to be offline."，
     /// 对用户没有任何指导意义。
