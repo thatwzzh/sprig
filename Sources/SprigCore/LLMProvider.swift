@@ -108,7 +108,8 @@ public enum LLMError: LocalizedError, Sendable {
         case .cannotConnectToHost, .networkConnectionLost:
             return .network("连不上服务器：检查 Base URL 和端口；本地模型先确认已启动。")
         case .secureConnectionFailed, .serverCertificateUntrusted:
-            return .network("TLS 握手失败：证书有问题，或中间有代理在拦截。")
+            return .network("TLS 握手失败：该域名可能被网络拦截（代理规则、防火墙），"
+                + "也可能是证书问题。先确认这个域名在当前网络下能访问。")
         case .cancelled:
             return .network("请求已取消。")
         default:
