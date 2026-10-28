@@ -357,9 +357,13 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         bottomInput.frame = NSRect(x: 0, y: 0,
                                    width: max(1, Theme.panelWidth - Theme.horizontalInset * 2),
                                    height: max(bottomHeight, 24))
+        // 宽度跟随面板；高度交给内容决定。
+        // 之前这里直接把高度设成 answerHeight（≤ answerMaxHeight），
+        // 于是超过 420pt 的内容既不显示、也不会产生可滚动区域。
         answerView.frame = NSRect(x: 0, y: 0,
                                   width: Theme.panelWidth,
-                                  height: max(answerHeight, Theme.answerMinHeight))
+                                  height: max(answerView.frame.height, Theme.answerMinHeight))
+        answerView.syncHeightToContent()
 
         let answerBlock = answerHeight > 0
             ? Theme.breadcrumbHeight + questionHeight + 1 + answerHeight + 1 + bottomHeight
@@ -732,6 +736,8 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
 
         let provider = Settings.provider
         // 没配搜索就传空数组，provider 走纯文本快路径，行为跟之前一致
+        // 降级会换模型，所以这里记配置而不是 provider，每轮现构造
+        var activeConfig = Settings.activeConfig
         let tools: [ToolDefinition] = Settings.webSearchReady ? [WebSearchTool.definition] : []
         let searchKey = Settings.webSearchAPIKey
         let searchBackend = Settings.searchBackend
@@ -745,14 +751,35 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
                 // 一轮 = 一次请求 +（可能的）工具执行。模型不需要工具就提前收尾。
                 for round in 0...maxRounds {
                     var requested: [ToolCall] = []
+                    var fallbackTried = 0
 
-                    for try await event in provider.streamEvents(messages: conversation, tools: tools) {
-                        if Task.isCancelled { return }
-                        switch event {
-                        case .text(let chunk):
-                            self.consume(chunk)
-                        case .toolCalls(let calls):
-                            requested = calls
+                    // 429 是上游共享池被抢空，换个模型通常立刻可用。
+                    // 只在还没吐出任何文字时换，否则会重复输出。
+                    while true {
+                        var produced = false
+                        let provider = activeConfig.makeProvider(disableThinking: Settings.disableThinking)
+                        do {
+                            for try await event in provider.streamEvents(messages: conversation, tools: tools) {
+                                if Task.isCancelled { return }
+                                switch event {
+                                case .text(let chunk):
+                                    produced = true
+                                    self.consume(chunk)
+                                case .toolCalls(let calls):
+                                    requested = calls
+                                }
+                            }
+                            break
+                        } catch let error as LLMError {
+                            guard case .http(429, _) = error,
+                                  !produced,
+                                  fallbackTried < 2,
+                                  let next = self.switchToNextModel() else {
+                                throw error
+                            }
+                            fallbackTried += 1
+                            activeConfig = next
+                            self.consume("\n\n（\(activeConfig.displayName) 限流，已切到 \(next.modelLabel)）\n\n")
                         }
                     }
                     if Task.isCancelled { return }
@@ -796,6 +823,22 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
                 self.failStreaming(error)
             }
         }
+    }
+
+    /// 429 时切到下一个候选模型，并让输入框右侧的胶囊立刻反映出来。
+    /// 只对「免费」这类有多个候选的接入有效；最后一个也没有了就返回 nil。
+    private func switchToNextModel() -> ProviderConfig? {
+        var configs = Settings.providerConfigs
+        guard let index = configs.firstIndex(where: { $0.id == Settings.activeProviderID }) else { return nil }
+        let models = configs[index].selectableModels
+        guard models.count > 1,
+              let position = models.firstIndex(of: configs[index].model),
+              position + 1 < models.count else { return nil }
+
+        configs[index].model = models[position + 1]
+        Settings.providerConfigs = configs
+        refreshModelButton()
+        return configs[index]
     }
 
     private func consume(_ chunk: String) {
@@ -854,6 +897,8 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
 
         answerHeight = measuredAnswerHeight()
         applyHeights(animated: false)
+        // 视口高度定了之后，还要让文本视图自己长到内容高度，否则超出部分滚不到
+        answerView.syncHeightToContent()
         answerView.scrollToBottom()
     }
 
@@ -1272,6 +1317,7 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         print("treeToggle.afterCollapse =", !content.treeToggle.isHidden)
         print("panel.width.closed =", panel.frame.width)
         print("clip.cornerRadius  =", content.layer?.cornerRadius ?? -1)
+        print("answerView.frame   =", answerView.frame, "| 视口:", content.answerScroll.contentSize)
         print("--- 模型菜单 ---")
         for item in makeModelMenu().items {
             if item.isSeparatorItem {

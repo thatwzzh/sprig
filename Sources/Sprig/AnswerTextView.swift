@@ -26,8 +26,13 @@ final class AnswerTextView: NSTextView {
         font = Theme.answerFont
         textColor = .labelColor
         textContainerInset = NSSize(width: Theme.horizontalInset, height: 12)
-        isVerticallyResizable = false
+        // 必须允许纵向增长：否则视图高度被锁在视口内，
+        // 超出部分既不显示、也不产生可滚动区域（容器 heightTracksTextView 是 false）
+        isVerticallyResizable = true
         isHorizontallyResizable = false
+        maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude,
+                         height: CGFloat.greatestFiniteMagnitude)
+        autoresizingMask = [.width]
         isAutomaticLinkDetectionEnabled = false
         linkTextAttributes = [
             .foregroundColor: NSColor.labelColor,
@@ -39,6 +44,18 @@ final class AnswerTextView: NSTextView {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    /// 让视图高度等于实际内容高度，scrollView 才有东西可滚。
+    /// 面板自身高度仍然由 `Theme.answerMaxHeight` 封顶，超出靠滚动看。
+    func syncHeightToContent() {
+        guard let layoutManager, let container = textContainer, bounds.width > 0 else { return }
+        container.size = NSSize(width: bounds.width, height: .greatestFiniteMagnitude)
+        layoutManager.ensureLayout(for: container)
+        let textHeight = layoutManager.usedRect(for: container).height
+        let target = max(textHeight + textContainerInset.height * 2, 0)
+        guard abs(frame.height - target) > 0.5 else { return }
+        setFrameSize(NSSize(width: bounds.width, height: target))
+    }
 
     /// 点答案区就把焦点从输入框拿过来：否则 ⌘C 会去复制输入框里的文字
     override func mouseDown(with event: NSEvent) {
