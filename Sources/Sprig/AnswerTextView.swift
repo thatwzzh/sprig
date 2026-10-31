@@ -35,9 +35,8 @@ final class AnswerTextView: NSTextView {
         autoresizingMask = [.width]
         isAutomaticLinkDetectionEnabled = false
         linkTextAttributes = [
-            .foregroundColor: NSColor.labelColor,
             .underlineStyle: NSUnderlineStyle.single.rawValue,
-            .underlineColor: NSColor.controlAccentColor.withAlphaComponent(0.55),
+            .underlineColor: MarkdownTheme.current.palette.accent.withAlphaComponent(0.45),
             .cursor: NSCursor.pointingHand,
         ]
         textContainer?.lineFragmentPadding = 0
@@ -97,9 +96,201 @@ final class AnswerTextView: NSTextView {
         ]
         if let term, let url = Self.conceptURL(for: term) {
             attributes[.link] = url
-            attributes[.font] = NSFont.systemFont(ofSize: Theme.answerFontPointSize, weight: .medium)
+            attributes[.font] = NSFont.systemFont(ofSize: MarkdownTheme.current.bodySize, weight: .medium)
         }
         storage.append(NSAttributedString(string: text, attributes: attributes))
+    }
+
+    /// 按 Markdown 重画整段答案。流式期间是纯文本追加，结束后/切卡回来走这里。
+    func renderRich(_ raw: String) {
+        guard let storage = textStorage else { return }
+        let output = NSMutableAttributedString()
+        let blocks = MarkdownLite.parse(raw)
+        for (index, block) in blocks.enumerated() {
+            if index > 0 {
+                output.append(NSAttributedString(string: "\n", attributes: baseAttributes()))
+            }
+            output.append(attributed(block))
+        }
+        // 同一术语只让第一次出现的地方可点，避免满屏同样的下划线
+        var seen = Set<String>()
+        output.enumerateAttribute(.link, in: NSRange(location: 0, length: output.length)) { value, range, _ in
+            guard let url = value as? URL, let term = Self.term(from: url) else { return }
+            if seen.contains(term) {
+                output.removeAttribute(.link, range: range)
+            } else {
+                seen.insert(term)
+            }
+        }
+        storage.setAttributedString(output)
+        setSelectedRange(NSRange(location: 0, length: 0))
+        showsPlaceholder = false
+    }
+
+    private func baseAttributes() -> [NSAttributedString.Key: Any] {
+        let theme = MarkdownTheme.current
+        return [
+            .font: theme.bodyFont,
+            .foregroundColor: theme.palette.text,
+            .paragraphStyle: theme.paragraph,
+        ]
+    }
+
+    private func attributed(_ block: MarkdownBlock) -> NSAttributedString {
+        // 用文本视图的真实可用宽度，别用面板常量——否则宽表/宽图会被右边缘裁掉
+        let available = bounds.width > 0
+            ? bounds.width - textContainerInset.width * 2
+            : Theme.panelWidth - Theme.horizontalInset * 2
+        if case .table(let header, let rows) = block.kind {
+            return Self.tableAttachment(header: header, rows: rows, maxWidth: available)
+        }
+        if case .chart(let spec) = block.kind {
+            let image = ChartImage.draw(spec: spec, maxWidth: available)
+            return Self.imageAttachment(image)
+        }
+        if case .html(let source) = block.kind {
+            // 渲染好了就画图；还没好（或渲染失败）先按代码块显示源码，不丢内容
+            if let image = HtmlSnapshot.cached(source) { return Self.imageAttachment(image) }
+        }
+        var attributes = baseAttributes()
+        var prefix = ""
+
+        switch block.kind {
+        case .paragraph:
+            break
+        case .heading(let level):
+            let theme = MarkdownTheme.current
+            let size = level == 1 ? theme.heading1 : (level == 2 ? theme.heading2 : theme.heading3)
+            attributes[.font] = NSFont.systemFont(ofSize: size, weight: level == 1 ? .bold : .semibold)
+            attributes[.paragraphStyle] = Self.headingParagraph(level: level)
+            attributes[.foregroundColor] = MarkdownTheme.current.palette.heading
+        case .bullet:
+            prefix = "•   "
+            attributes[.paragraphStyle] = Self.indentedParagraph()
+        case .ordered(let marker):
+            prefix = "\(marker)  "
+            attributes[.paragraphStyle] = Self.indentedParagraph()
+        case .quote:
+            attributes[.foregroundColor] = MarkdownTheme.current.palette.secondary
+            attributes[.paragraphStyle] = Self.indentedParagraph(indent: 10)
+        case .table, .chart, .html:
+            break   // 表格/图表/HTML 在方法开头单独处理
+        case .code:
+            attributes[.font] = MarkdownTheme.current.monoFont
+            attributes[.foregroundColor] = MarkdownTheme.current.palette.codeText
+            attributes[.backgroundColor] = MarkdownTheme.current.palette.codeBackground
+            attributes[.paragraphStyle] = Self.codeParagraph()
+        }
+
+        var inlineRuns = block.inlines
+        // 末尾补一个换行：最后一段没有换行符时，AppKit 不会给这一行画底色
+        if case .code = block.kind {
+            inlineRuns = block.inlines.map { inline -> MarkdownInline in
+                guard case .text(var value) = inline else { return inline }
+                if !value.hasSuffix("\n") { value += "\n" }
+                return .text(value)
+            }
+        }
+        if case .html(let source) = block.kind {
+            attributes[.font] = MarkdownTheme.current.monoFont
+            attributes[.backgroundColor] = NSColor.quaternaryLabelColor.withAlphaComponent(0.10)
+            attributes[.paragraphStyle] = Self.codeParagraph()
+            inlineRuns = [.text(source)]
+        }
+
+        let result = NSMutableAttributedString()
+        if !prefix.isEmpty {
+            result.append(NSAttributedString(string: prefix, attributes: attributes))
+        }
+        for inline in inlineRuns {
+            switch inline {
+            case .text(let value):
+                result.append(NSAttributedString(string: value, attributes: attributes))
+            case .code(let value):
+                var code = attributes
+                code[.font] = MarkdownTheme.current.monoFont
+                code[.backgroundColor] = MarkdownTheme.current.palette.inlineCodeBackground
+                code[.foregroundColor] = MarkdownTheme.current.palette.codeText
+                result.append(NSAttributedString(string: value, attributes: code))
+            case .bold(let value):
+                var bold = attributes
+                bold[.font] = NSFont.systemFont(ofSize: MarkdownTheme.current.bodySize, weight: .semibold)
+                result.append(NSAttributedString(string: value, attributes: bold))
+            case .italic(let value):
+                var italic = attributes
+                italic[.font] = NSFontManager.shared.convert(Theme.answerFont, toHaveTrait: .italicFontMask)
+                result.append(NSAttributedString(string: value, attributes: italic))
+            case .term(let value):
+                var term = attributes
+                term[.font] = NSFont.systemFont(ofSize: MarkdownTheme.current.bodySize, weight: .medium)
+                term[.foregroundColor] = MarkdownTheme.current.palette.accent
+                if let url = Self.conceptURL(for: value) { term[.link] = url }
+                result.append(NSAttributedString(string: value, attributes: term))
+            }
+        }
+        return result
+    }
+
+    /// 表格画成图片再挂进文本：不用 NSTextTable 那一套（API 难对齐、样式也难控），
+    /// 图片参与排版，高度测量自然就对。
+    private static func imageAttachment(_ image: NSImage) -> NSAttributedString {
+        let attachment = NSTextAttachment()
+        attachment.image = image
+        attachment.bounds = NSRect(x: 0, y: 0, width: image.size.width, height: image.size.height)
+        let result = NSMutableAttributedString(attachment: attachment)
+        result.append(NSAttributedString(string: "\n", attributes: [
+            .font: Theme.answerFont,
+            .foregroundColor: NSColor.labelColor,
+            .paragraphStyle: Theme.answerParagraph,
+        ]))
+        return result
+    }
+
+    private static func tableAttachment(header: [String], rows: [[String]], maxWidth: CGFloat) -> NSAttributedString {
+        let columns = max(header.count, rows.map(\.count).max() ?? 0)
+        guard columns > 0 else { return NSAttributedString() }
+        let image = TableImage.draw(header: header, rows: rows, columns: columns,
+                                    maxWidth: maxWidth, palette: MarkdownTheme.current.palette)
+        let attachment = NSTextAttachment()
+        attachment.image = image
+        attachment.bounds = NSRect(x: 0, y: 0, width: image.size.width, height: image.size.height)
+        let result = NSMutableAttributedString(attachment: attachment)
+        result.append(NSAttributedString(string: "\n", attributes: [
+            .font: Theme.answerFont,
+            .foregroundColor: NSColor.labelColor,
+            .paragraphStyle: Theme.answerParagraph,
+        ]))
+        return result
+    }
+
+    private static func indentedParagraph(indent: CGFloat = 18) -> NSParagraphStyle {
+        let style = NSMutableParagraphStyle()
+        style.lineSpacing = MarkdownTheme.current.lineSpacing
+        style.paragraphSpacing = 5
+        style.headIndent = indent
+        style.firstLineHeadIndent = 0
+        return style
+    }
+
+    /// 标题：上面留白多、下面少，和正文拉开层次（Typora 的默认观感）
+    private static func headingParagraph(level: Int) -> NSParagraphStyle {
+        let style = NSMutableParagraphStyle()
+        style.lineSpacing = 3
+        style.paragraphSpacingBefore = level == 1 ? 14 : (level == 2 ? 12 : 10)
+        style.paragraphSpacing = level == 1 ? 8 : 6
+        return style
+    }
+
+    /// 代码块里每个换行都是一个段落，段距必须归零，否则每行之间都会空一大截
+    private static func codeParagraph() -> NSParagraphStyle {
+        let style = NSMutableParagraphStyle()
+        style.lineSpacing = 3
+        style.paragraphSpacing = 0
+        style.paragraphSpacingBefore = 0
+        style.paragraphSpacing = 0
+        style.headIndent = 10
+        style.firstLineHeadIndent = 10
+        return style
     }
 
     func scrollToBottom() {
@@ -109,6 +300,18 @@ final class AnswerTextView: NSTextView {
         let target = max(0, documentHeight - visibleHeight)
         scrollView.contentView.scroll(to: NSPoint(x: 0, y: target))
         scrollView.reflectScrolledClipView(scrollView.contentView)
+    }
+
+    /// 报错后面的「重试」：用链接实现，点击由 PanelController 分发
+    func appendRetryLink() {
+        guard let storage = textStorage else { return }
+        var attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: MarkdownTheme.current.bodySize, weight: .medium),
+            .foregroundColor: NSColor.controlAccentColor,
+            .paragraphStyle: Theme.answerParagraph,
+        ]
+        attributes[.link] = URL(string: "sprig://retry")
+        storage.append(NSAttributedString(string: "\n↻ 重试本次对话\n", attributes: attributes))
     }
 
     static func conceptURL(for term: String) -> URL? {

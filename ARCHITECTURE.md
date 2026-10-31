@@ -39,7 +39,7 @@
 ┌───────────────────────────▼─────────────────────────────────┐
 │  SprigCore（无 UI，可单测）                                 │
 │                                                              │
-│  LLMProvider(protocol) ← Ollama / OpenAI 兼容 / Gemini         │
+│  LLMProvider(protocol) ← Ollama / OpenAI 兼容 / ACP agent      │
 │  TermParser        ⟦术语⟧ 流式状态机                          │
 │  ContextAssembler  按 Policy 预算拼上下文                     │
 │  Prompt            系统提示词 / 子卡消息模板                   │
@@ -69,10 +69,11 @@ UI 层不直接读文件，Core 层不 import AppKit——这条边界让「解�
 | `ContextAssembler` | 上下文 | 按模型真实窗口动态算预算（本地固定紧预算）；预留搜索结果空间；按句子边界截断 |
 | `CardStore` | 存储 | `actor`，JSON 原子写入；删除级联 |
 | `ProviderConfig` | 接入配置 | 名称/协议/Base URL/Key/模型，Codable 存 UserDefaults；`category` 分本地/免费/自定义，`cachedModels` 存免费类展开的模型清单 |
-| `OllamaProvider` | 模型 | NDJSON；`think:false`、`num_ctx:8192`、`keep_alive:30m` |
+| `OllamaProvider` | 模型 | NDJSON；`think:false`、`num_ctx:8192`、`keep_alive:10m` |
 | `OpenAICompatibleProvider` | 模型 | SSE；`/v1/chat/completions`，Base URL 自动归一化 |
-| `GeminiProvider` | 模型 | 原生 SSE；`systemInstruction` + `x-goog-api-key` |
-| `FreeModelCatalog` | 免费模型目录 | OpenRouter `/api/v1/models`，按 `pricing` 为 0 筛免费；无需 Key。挑模型用「排除表 + 偏好权重」，权重看中文与指令遵循，不按上下文长度 |
+| `AcpClient` | ACP agent | 进程复用、`session/new` 一次一问、登录态隔离、三态探活 |
+| `AcpCodec` | ACP 协议 | 帧解析、启动参数补全（`--serve`/`--port`）、错误翻译 |
+| `AcpPresets` / `AgentConfig` | agent 目录 | 内置预设清单 + 本机检测（PATH / 自带 CLI / npx 缓存） |
 | `WebSearchTool` | 联网搜索 | Tavily `/search`；摘要截 600 字/条，避免吃掉上下文预算 |
 
 ## 4. 数据流
@@ -190,10 +191,8 @@ struct AnswerCard {
 }
 ```
 
-存储：默认 `~/Documents/Sprig/cards-v2.json`（设置里可换目录），`CardStore` 是 `actor`，
-写入用 `.atomic`。切换目录时若目标库不存在，会先把当前库（或更早的
-`~/Documents/a/cards-v2.json` / `~/Library/Application Support/ConceptLens/cards-v2.json`）复制过去，
-避免卡片"消失"。
+存储：默认 `~/Documents/Sprig/repository/`。人读的是每棵知识树一份 Markdown；程序读隐藏的 `.cards.json`（设置里可换目录），`CardStore` 是 `actor`，
+写入用 `.atomic`。切换目录时若目标库不存在，会把当前库复制过去，避免卡片"消失"。
 删除是级联的（先求后代闭包，再一起移除）。
 
 **为什么不是 GRDB**：当前量级在几百张卡，JSON 足够且零依赖。接口刻意保持
@@ -208,9 +207,7 @@ struct AnswerCard {
 
 | provider | 来源 | 实测 |
 |---|---|---|
-| Gemini | 内置已知值 | 1,048,576 |
 | Ollama | `/api/tags` 的 `details.context_length` | 262,144 |
-| OpenRouter | 模型清单的 `context_length` | 262,144 |
 | OpenAI / DeepSeek / 自定义网关 | 拿不到，用默认 128k 估算 | — |
 
 算法在 `Policy.dynamic`：`min(max(窗口/3, 4000), 30000)`。上限 30000 是因为再长首字延迟和
@@ -310,42 +307,26 @@ total = inputHeight(46…96)
 | 输入语义 | 顶部=新根卡，底部=子卡 | 统一一个输入框 | 两个动作语义不同，混在一起用户无法预测 |
 | 流式切换 | 转后台继续跑 | 直接取消 | 半截答案没有价值，而且用户看不出是被打断的 |
 | 搜索结果 | 折叠成一行 + 点开菜单 | 平铺标题和域名 | 平铺会把正文切碎，读起来很吵 |
-| 免费模型 | 三家并列，按「越可能长期免费」排序 | 只留一家 | 免费政策变得比代码快，多留退路 |
+| 免费模型 | 内置智谱一家，其余走自定义接入 | 内置一堆免费通道 | 免费政策变得比代码快，内置多了都在维护别人的限流 |
 
-## 11. 踩过的坑（都在代码里有注释）
+## 11. 实现约束（每一条在代码里都有注释）
 
-1. **`NSVisualEffectView` 圆角无效**：背景层是方的，直接设 `cornerRadius` 会露四角。→ 外层容器裁切 + `maskImage`。
-2. **`NSAlert` 的图标去不掉**：设 `icon = nil` 会回退到 App 图标，换空图仍占一块图标区（新版系统还排在标题上方）。→ 自绘 `ConfirmDialog`，`NSApp.runModal` 应用级模态，level 提到 `.modalPanel`（否则被 `.floating` 面板压住）。
-3. **`NSMenu` 打开导致面板消失**：菜单跟踪期间 `resignKey`。→ `didBegin/EndTracking` 计数屏蔽。
-4. **`NSOutlineView` 不自动撑满**：作为 `documentView` 时 frame 不会跟随 scroll view，必须手算宽高。
-5. **`NSScrollView` 把 documentView 撑宽 32pt**：树会冒出横向滚动，行尾 hover 按钮也会落进裁切区。→ 在 `frame` / `setFrameSize` 两处把宽度夹到 clip 宽度；按钮按 `visibleRightEdge` 定位，标题占满按钮左侧并以省略号收尾。
-6. **`.titled` 标题栏吞点击**：顶部 28pt 变成拖拽区。→ `.borderless`。
-7. **IME 候选框错位**：非激活面板里中文输入法候选框会飘。→ 覆写 `firstRect(forCharacterRange:)` 手工换算屏幕坐标。
-8. **qwen3 默认开思维链**：`content` 为空、`thinking` 逐字输出。→ `"think": false`。
-9. **Ollama 默认 `num_ctx=262144`**：9B-q8 撑到 20GB、约 30s/token。→ `num_ctx: 8192`。
-10. **SwiftPM 被 `sandbox-exec` 拦截**：本机所有构建命令需 `--disable-sandbox`。
-11. **macOS 26 起菜单栏图标需要系统授权**：系统设置 → 菜单栏 → 「允许在菜单栏中显示」，按 bundle id 记录。
-    关掉后 `NSStatusItem` 直接失效——`isVisible = true` 会被系统立刻重置回 false，或者图标窗口被
-    ControlCenter 摆到屏幕外（y 为负）。**app 端没有任何 API 能自行恢复。**
-    症状极易误判成代码 bug：实测改图标宽度、去掉 `item.menu`、改 bundle id、改 app 名、精简 Info.plist、
-    延迟创建、去 `prewarm`、`killall SystemUIServer` / ControlCenter / Dock 全部无效；
-    同一份代码换个时间点启动有时能显示，是因为当时授权开关还开着。详见 README「菜单栏图标不见了」。
-12. **`NSTextContainer` 的宽度不能手动设成 `bounds.width`**：`widthTracksTextView = true` 时
-    NSTextView 自己会把它设成 `frame.width - inset*2`。手动接管会让文字右侧多出 16pt，
-    直接画到面板外面去（表现为行尾一两个字被裁）。**文字溢出先看容器尺寸，不是视图 frame。**
-    诊断：`--selftest` 会打印 `textContainer.size`，正确值应是 `frame.width - 32`。
-13. **`openAICompatible` 是个筐**：新增一家网关时，凡是按 `kind` 特判的地方都要复核。
-    踩过两次——`fetchFreeModels` 把所有 OpenAI 兼容都当成 OpenRouter，拉回了别人的模型清单；
-    路径拼接对所有 base 都补 `/v1`，智谱的 `/api/paas/v4` 变成 `/v4/v1/chat/completions`。
-    现在按 `baseURL` 是否含 `openrouter` / `bigmodel` 分流，并用 `hasVersionPrefix` 识别 `/v1` `/v3` `/v4`。
-14. **`NSTextField` 的 `controlTextDidEndEditing` 要等失焦才触发**，而按钮 action 先跑。
-    结果就是「填了 Key 点同步，Key 没了」——同步读到的还是旧值，同步完又把空值写回输入框。
-    → 所有「读表单再执行」的动作开头都先 `persistXxx()`。
-15. **后台任务的 raw 和 `stack.raw` 是两份**：收尾时用 `stack.raw` 判断「有没有内容」，
-    后台跑的那张一定是空的，于是误报「模型没有返回任何内容」。判断有无内容要看缓冲。
-16. **免费模型普遍限流**（产品层面，不是 bug）：智谱 GLM-4.7-Flash 实测成功率约 1/3，
-    Gemini 15 RPM 且要代理，OpenRouter 免费池高峰期大量 429。
-    app 能做的是重试 + 换模型 + 换 provider，但额度真没了只能等。README 里明确写了「仅供试用」。
+1. **`NSVisualEffectView` 的圆角要靠外层裁切**：背景层是方的，直接设 `cornerRadius` 会露四角。外层容器裁切 + `maskImage`。
+2. **确认框自绘，不用 `NSAlert`**：`icon = nil` 会回退到 App 图标，空图仍占一块图标区。用 `ConfirmDialog` + `NSApp.runModal`，level 提到 `.modalPanel`（否则被 `.floating` 面板压住）。
+3. **菜单跟踪期间屏蔽 `resignKey`**：`NSMenu` 打开会让面板失焦收起，靠 `didBegin/EndTracking` 计数判断。
+4. **`NSOutlineView` 作 `documentView` 时手算宽高**：frame 不会自动跟随 scroll view。
+5. **树宽按 clip 宽度夹住**：`NSScrollView` 会把 documentView 撑宽 32pt，导致横向滚动和行尾按钮被裁。在 `frame` / `setFrameSize` 两处夹宽度，按钮按 `visibleRightEdge` 定位。
+6. **面板用 `.borderless`**：`.titled` 的标题栏会吞掉顶部 28pt 的点击（变成拖拽区）。
+7. **IME 候选框位置手算**：非激活面板里中文候选框会飘，覆写 `firstRect(forCharacterRange:)` 换算屏幕坐标。
+8. **Ollama 显式关思考链**：qwen3 默认开思维链，`content` 为空、`thinking` 逐字输出，所以请求带 `"think": false`。
+9. **Ollama 显式限 `num_ctx`**：默认窗口会让 9B-q8 撑到 20GB、约 30s/token，固定 `num_ctx: 8192`。
+10. **构建要 `--disable-sandbox`**：SwiftPM 调 `sandbox-exec` 被系统拒绝，`make-app.sh` 里已带。
+11. **菜单栏图标依赖系统授权**：系统设置 → 菜单栏 → 「允许在菜单栏中显示」，按 bundle id 记录。关掉后 `NSStatusItem` 失效，`isVisible = true` 会被重置，**app 端没有 API 能自行恢复**。
+12. **`NSTextContainer` 宽度交给 `widthTracksTextView`**：手动设成 `bounds.width` 会让文字右侧多出 16pt、画到面板外。诊断看 `--selftest` 打印的 `textContainer.size`，正确值是 `frame.width - 32`。
+13. **`openAICompatible` 是筐，按 `baseURL` 分流**：`fetchFreeModels` 与路径拼接都要区分 `bigmodel`（`/api/paas/v4` 不能再补 `/v1`），用 `hasVersionPrefix` 识别 `/v1` `/v3` `/v4`。
+14. **「读表单再执行」前先 `persistXxx()`**：`controlTextDidEndEditing` 要等失焦才触发，而按钮 action 先跑，会读到旧值再把空值写回输入框。
+15. **判断「有没有内容」看缓冲，不看 `stack.raw`**：后台跑的那张卡 `stack.raw` 一定是空的。
+16. **免费模型限流是产品约束**：智谱 GLM-4.7-Flash 成功率约 1/3，app 只做重试 + 换模型，额度没了只能等。
 
 ## 12. 测试与调试
 
@@ -388,6 +369,75 @@ main.swift
                  │                   ├─ CardStore (actor)
                  │                   └─ Settings ── ProviderConfig ──┬─ OllamaProvider
                  │                                                  ├─ OpenAICompatibleProvider
-                 │                                                  └─ GeminiProvider
+                 │                                                  └─ AcpClient（外部进程）
                  └─ SettingsWindowController
 ```
+
+## 15. ACP agent 接入
+
+面板可以把问题转给一个外部 ACP agent（`AcpClient`），进程按「启动命令 + 工作目录」复用，
+每一问单独 `session/new`。
+
+**启动参数**（`AcpEnvironment.codebuddyLaunchAdjustment`）：WorkBuddy 自带的
+`codebuddy` 没有 `codebuddy-headless`，要走 lite 包（`CODEBUDDY_FORCE_LITE_WB_BUNDLE=1`），
+并且 `--serve`、`--acp`、`--port <空闲端口>` 三个都得在：
+
+- 只写 `--acp` → `MODULE_NOT_FOUND` 直接退出；
+- `--serve --acp` 不给端口 → 它自己挑的端口被已在运行的实例占着，进程活着但**一个帧都不回**
+  （表现就是 initialize 永远超时）；
+- 显式给一个空闲端口，才真的停在 stdio ACP 上。
+
+**登录态隔离**（`AcpClient.agentHome`）：**只对 codebuddy/cbc 生效**，agent 的 HOME 指向
+`~/Library/Application Support/Sprig/agent-home`，于是它的 `~/.codebuddy` 和
+`~/Library/Application Support/CodeBuddyExtension`（凭据）都落在自己目录里。
+
+原因是 codebuddy 的 ACP `authenticate` 第一步就是「已登录就先 logout」，
+共用凭据文件会把 WorkBuddy 桌面端的登录态顶掉。隔离之后登录、退出都只影响 agent 自己。
+claude / codex / gemini 这类 agent 用**正常 HOME**：它们的登录态本来就不跟别的进程抢，
+隔离只会让用户莫名其妙地重登一次。
+`SPRIG_AGENT_HOME=none` 可关掉隔离，`SPRIG_AGENT_HOME=<路径>` 可换位置。
+
+**模型**：`session/new` 会带回 `models.availableModels`（新形状）或 `configOptions` 里 `category=model` 的那条（老形状），`parseSessionStart` 两种都认。
+切换先发 `session/set_config_option`，被拒（`-32602`，codex-acp 就是这样）再退到 legacy 的 `session/set_model`。
+每一问都是新会话，所以选中的模型在每轮 `session/prompt` 之前要重设一次。
+
+**Markdown 渲染**：`MarkdownLite` 解析（标题/列表/引用/代码块/表格/行内样式）→ `AnswerTextView.renderRich` 排版。
+表格画成图片再挂 `NSTextAttachment`（`TableImage`）：`NSTextTable` 的行高和边框不可控，图片则完全可算，
+图表同理（`ChartImage`：柱状/折线，步长取 1/1.2/1.5/2/2.5/3/4/5/6/8×10ⁿ，避免 12.5 这种刻度）。
+```html 块走 `HtmlSnapshot`：WKWebView 离屏加载（塞进 borderless window，否则不排版）→ 量 scrollHeight →
+`takeSnapshot`；结果按 HTML 内容哈希缓存在内存，并落成 `assets/html-<hash>.png`。
+导出时 `expandHtmlBlocks` 若图片存在就写 `![](assets/…)`，否则把标签转义成代码块（原文不丢）。
+导出侧 `CardMarkdown.expandChartBlocks` 把 `sprig-chart` 代码块转成两列表格，
+知识库里永远是可读的 Markdown。
+
+**报错不落盘**：失败文案只放在 `Node.errorText`（面板显示用），末尾带一个 `sprig://retry` 链接——
+点击由 `textView(_:clickedOnLink:)` 分发到 `retryTurn()`，用同一张卡重建原请求重跑。不写进 `card.answer`，
+所以既不会进 JSON 也不会被 `CardMarkdown` 同步进 Markdown。卡片保留问题、答案留空。
+
+**登录流程**：没登录时 `session/new` 不回 refusal，而是
+`error.data.category = "auth"`（`AcpError.authRequired`）。收到它就先发 `authenticate`，
+agent 随后推 `_codebuddy.ai/authUrl` 通知，面板把链接显示出来并打开浏览器，
+`authenticate` 兑现后自动重试一次。链接在**启动阶段**就会推，所以钩子是整轮挂着的，
+不是只在 `login()` 里等。
+
+**排查**：`SPRIG_ACP_TRACE=/tmp/acp.log` 启动，收发的原始帧都落到文件里。
+
+**Agent 区**：设置页是一排标签（`AgentChipsView`），只显示名称，状态用名称后面的图标表示
+（`✓` 成功 / `!` 未登录 / `✕` 失败 / `○` 没测），一行放不下自动换行。
+
+启动和打开设置时 `AgentDetector.detect()` 扫本机：PATH 上能解析到的可执行文件、
+WorkBuddy 自带 CLI、以及 `~/.npm/_npx` 里已经下过的包（claude / codex 这两个走 npx 的）。
+命中的自动并进来（`Settings.syncDetectedAgents`）。**检测出来的只是标签**：不能删、点了也没反应；
+单击任何一条都会打开设置弹窗（检测到的只能改模型，自定义的还能改名字和命令）；`＋` 挂在标签流末尾（自定义项），删除放在弹窗里（只有自定义项有这个按钮）。
+面板当前用哪一条由标签边框高亮表示，切换在对话窗口的模型菜单里。
+删掉检测项记的是预设 id（`dismissedAgentPresets`）；每次检测都会回头看那个预设**现在还装不装**，
+已经卸载的把记录清掉——所以重装之后它会自己回来。
+标题行左侧的「重新检测」手动重扫一次，不用关掉再打开设置。
+
+工作目录是**全局共用**的，放在标签下面，不放进添加弹窗——换 agent 不该顺带换目录。
+「测试全部」逐条握手（`AcpClient.probeStatus`：initialize + `session/new`；
+遇到 `authRequired` 先用 agent 声明的方法 `authenticate` 一次再重试——cursor 每个连接都要求先握手，
+即使 `agent status` 显示已登录）。
+对话窗口的模型菜单直接列出所有已配置 agent，选谁就用谁。
+
+Agent 模式下**联网搜索开关禁用**（面板上的和设置页的都是）：联不联网由 agent 自己决定。

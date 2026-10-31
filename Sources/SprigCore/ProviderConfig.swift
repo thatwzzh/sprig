@@ -6,13 +6,11 @@ import Foundation
 /// 存储见 `Settings.providerConfigs`（UserDefaults 里的 JSON 数组）。
 public struct ProviderConfig: Codable, Identifiable, Sendable, Equatable {
     public enum Kind: String, Codable, Sendable, CaseIterable {
-        case gemini
         case ollama
         case openAICompatible
 
         public var title: String {
             switch self {
-            case .gemini: return "Google Gemini"
             case .ollama: return "Ollama（本地）"
             case .openAICompatible: return "OpenAI 兼容"
             }
@@ -20,7 +18,6 @@ public struct ProviderConfig: Codable, Identifiable, Sendable, Equatable {
 
         public var defaultBaseURL: String {
             switch self {
-            case .gemini: return "https://generativelanguage.googleapis.com"
             case .ollama: return "http://127.0.0.1:11434"
             case .openAICompatible: return "https://api.openai.com/v1"
             }
@@ -29,7 +26,6 @@ public struct ProviderConfig: Codable, Identifiable, Sendable, Equatable {
         /// 免费层价目表变动频繁，这里只放当前确认可用的默认值，用户随时可改
         public var defaultModel: String {
             switch self {
-            case .gemini: return "gemini-3.8-flash"
             case .ollama: return "qwen3:4b-instruct"
             case .openAICompatible: return "gpt-4o-mini"
             }
@@ -42,17 +38,11 @@ public struct ProviderConfig: Codable, Identifiable, Sendable, Equatable {
         public var isLocal: Bool { self == .ollama }
 
         /// 能确定的窗口大小。Ollama 靠探测、OpenAI 兼容各家不同，都返回 nil。
-        public var knownContextLength: Int? {
-            switch self {
-            case .gemini: return 1_048_576   // gemini-2.5-flash
-            case .ollama, .openAICompatible: return nil
-            }
-        }
+        public var knownContextLength: Int? { nil }
 
         /// 设置页里 Base URL / 模型的输入提示
         public var baseURLHint: String {
             switch self {
-            case .gemini: return "https://generativelanguage.googleapis.com（可留空用默认）"
             case .ollama: return "http://127.0.0.1:11434"
             case .openAICompatible: return "填到 /v1 或只填域名都可以"
             }
@@ -63,7 +53,7 @@ public struct ProviderConfig: Codable, Identifiable, Sendable, Equatable {
     public enum Category: String, Codable, Sendable, CaseIterable {
         /// 本机推理，默认 Ollama，模型名手填
         case local
-        /// Gemini / OpenRouter，模型清单从接口拉
+        /// 内置的免费通道（目前只有智谱），模型清单从接口拉
         case free
         /// 用户自填 Base URL + Key + 模型名
         case custom
@@ -78,10 +68,7 @@ public struct ProviderConfig: Codable, Identifiable, Sendable, Equatable {
     }
 
     /// 内置项用固定 id，跨启动稳定
-    public static let builtinGeminiID = UUID(uuidString: "5A1B0C00-0000-4000-8000-00000000A001")!
     public static let builtinOllamaID = UUID(uuidString: "0A11AB00-0000-4000-8000-00000000B002")!
-    /// OpenRouter 免费模型：由 FreeModelCatalog 自动创建并每日维护，id 固定便于幂等更新
-    public static let builtinOpenRouterFreeID = UUID(uuidString: "5A1B0C00-0000-4000-8000-00000000C003")!
     /// 智谱 GLM-4.7-Flash：官方标着永久免费，国内直连，不需要代理
     public static let builtinZhipuID = UUID(uuidString: "5A1B0C00-0000-4000-8000-00000000D004")!
 
@@ -95,7 +82,7 @@ public struct ProviderConfig: Codable, Identifiable, Sendable, Equatable {
     /// 内置项不允许删除
     public var isBuiltin: Bool
     /// 模型的上下文窗口（token 数）。nil = 未知，装配上下文时用保守默认。
-    /// 可选字段，旧数据解码出来就是 nil，不需要迁移。
+    /// 可选字段：缺省即 nil，装配上下文时退回保守默认。
     public var contextLength: Int?
     /// 分类。nil 表示旧数据，读的时候按 kind/baseURL 推断。
     public var category: Category?
@@ -124,28 +111,15 @@ public struct ProviderConfig: Codable, Identifiable, Sendable, Equatable {
         self.cachedModels = cachedModels
     }
 
-    /// 读取时用的分类。旧配置没有这个字段，按 kind 和 baseURL 推断：
-    /// Ollama 是本地，Gemini 和 OpenRouter 归免费，其余 OpenAI 兼容都是自定义。
+    /// 分类。没显式存过就按 kind 推断：Ollama 是本地，其余都是自定义。
     public var resolvedCategory: Category {
         if let category { return category }
-        switch kind {
-        case .ollama:
-            return .local
-        case .gemini:
-            return .free
-        case .openAICompatible:
-            return baseURL.lowercased().contains("openrouter") ? .free : .custom
-        }
+        return kind == .ollama ? .local : .custom
     }
 
-    /// 免费组内的展示顺序：智谱 → OpenRouter → Gemini。
-    /// 越靠前越可能长期免费，用户应该先看到。
+    /// 免费组内的展示顺序：智谱排最前，其余按名字。
     public var freeSortRank: Int {
-        let base = baseURL.lowercased()
-        if base.contains("bigmodel") { return 0 }
-        if base.contains("openrouter") { return 1 }
-        if kind == .gemini { return 2 }
-        return 9
+        baseURL.lowercased().contains("bigmodel") ? 0 : 9
     }
 
     /// 面板菜单里要列出的模型。
@@ -200,21 +174,13 @@ public struct ProviderConfig: Codable, Identifiable, Sendable, Equatable {
                                             model: trimmedModel.isEmpty ? kind.defaultModel : trimmedModel,
                                             temperature: temperature,
                                             disableThinking: disableThinking)
-        case .gemini:
-            return GeminiProvider(id: id.uuidString,
-                                  displayName: displayName,
-                                  baseURL: url,
-                                  apiKey: key,
-                                  model: trimmedModel.isEmpty ? kind.defaultModel : trimmedModel,
-                                  temperature: temperature,
-                                  disableThinking: disableThinking)
         }
     }
 }
 
 public extension ProviderConfig {
     /// 首次启动的预置接入。智谱在前：它当前是唯一「不限 token 总量」的国内免费模型。
-    static func builtins(ollamaModel: String, ollamaBaseURL: String) -> [ProviderConfig] {
+    static func builtins() -> [ProviderConfig] {
         [
             ProviderConfig(id: builtinZhipuID,
                            name: "智谱 GLM（免费）",
@@ -225,52 +191,13 @@ public extension ProviderConfig {
                            // GLM-4.7-Flash 是 200K 窗口
                            contextLength: 204_800,
                            category: .free),
-            ProviderConfig(id: builtinGeminiID,
-                           name: "Gemini（免费）",
-                           kind: .gemini,
-                           baseURL: Kind.gemini.defaultBaseURL,
-                           model: Kind.gemini.defaultModel,
-                           isBuiltin: true,
-                           // gemini-2.5-flash 是 1M 窗口，这是内置项里少数能确定的值
-                           contextLength: 1_048_576,
-                           category: .free),
             ProviderConfig(id: builtinOllamaID,
                            name: "Ollama 本地",
                            kind: .ollama,
-                           baseURL: ollamaBaseURL.isEmpty ? Kind.ollama.defaultBaseURL : ollamaBaseURL,
-                           model: ollamaModel.isEmpty ? Kind.ollama.defaultModel : ollamaModel,
+                           baseURL: Kind.ollama.defaultBaseURL,
+                           model: Kind.ollama.defaultModel,
                            isBuiltin: true,
                            category: .local),
         ]
-    }
-
-    /// OpenRouter 免费模型接入。由 `Settings.syncFreeModels()` 自动创建并每日维护。
-    /// 标成内置是为了让每日同步幂等：用户不会把它删掉、第二天又冒出来。
-    public static func openRouterFree(model: String, contextLength: Int? = nil) -> ProviderConfig {
-        ProviderConfig(id: builtinOpenRouterFreeID,
-                       name: "OpenRouter 免费",
-                       kind: .openAICompatible,
-                       baseURL: FreeModelCatalog.openRouterBaseURL,
-                       model: model,
-                       isBuiltin: true,
-                       contextLength: contextLength,
-                       category: .free)
-    }
-
-    /// 这条接入该去哪里领 API Key。设置页据此显示可点的「去获取」。
-    /// 只给确定能免费拿到的地址；不认识的 OpenAI 兼容网关返回 nil，不瞎猜。
-    public var keyHelp: (text: String, url: URL)? {
-        let base = baseURL.lowercased()
-        if base.contains("openrouter") {
-            return ("在 openrouter.ai/keys 免费领一个 Key（免费层约 20 次/分钟、50 次/天）",
-                    URL(string: "https://openrouter.ai/keys")!)
-        }
-        switch kind {
-        case .gemini:
-            return ("在 Google AI Studio 免费领一个 Key（免费层约 10–15 次/分钟）",
-                    URL(string: "https://aistudio.google.com/apikey")!)
-        case .ollama, .openAICompatible:
-            return nil
-        }
     }
 }

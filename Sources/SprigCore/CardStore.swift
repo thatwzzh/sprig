@@ -5,39 +5,46 @@ import Foundation
 public actor CardStore {
     public static let shared = CardStore()
 
-    public static let fileName = "cards-v2.json"
+    /// 程序读取的底稿。以点开头，访达里默认不显示。
+    public static let fileName = ".cards.json"
 
     private var cards: [UUID: AnswerCard] = [:]
     private var loaded = false
+    /// 读到的 JSON 无法解码时不许落盘，避免一次坏文件把库写成空的。
+    private var refusePersist = false
     private var fileURL: URL
 
     public init(fileURL: URL? = nil) {
-        self.fileURL = fileURL ?? Self.legacyFileURL
+        self.fileURL = fileURL ?? Self.defaultFileURL
     }
 
-    /// 改名前的旧位置（Application Support/ConceptLens）；切换知识库目录时作为兜底数据源。
-    /// 这里故意保留旧目录名，改名不影响老数据的读取。
-    private static var legacyFileURL: URL {
+    /// 真正的知识库由 `useDirectory` 指过来；这只是启动前的占位。
+    private static var defaultFileURL: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSTemporaryDirectory())
-        return base
-            .appendingPathComponent("ConceptLens", isDirectory: true)
+        return base.appendingPathComponent("Sprig", isDirectory: true)
             .appendingPathComponent(fileName)
+    }
+
+    public static func existingLibrary(in directory: URL) -> URL? {
+        let url = directory.appendingPathComponent(fileName)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
     /// 切换知识库目录。
     /// 目标目录已有数据就直接读；没有数据时把当前库（或旧默认位置）的文件复制过去，
     /// 避免切换目录（比如新版默认 ~/Documents/Sprig）时卡片“凭空消失”。
     public func useDirectory(_ directory: URL) {
-        let target = directory.appendingPathComponent(Self.fileName)
+        let target = Self.existingLibrary(in: directory) ?? directory.appendingPathComponent(Self.fileName)
         guard target.standardizedFileURL != fileURL.standardizedFileURL else {
             loadIfNeeded()
+            publishMarkdown()
             return
         }
 
         if !FileManager.default.fileExists(atPath: target.path) {
-            let candidates = [fileURL, Self.legacyFileURL]
-            if let source = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }) {
+            let source = fileURL
+            if FileManager.default.fileExists(atPath: source.path) {
                 try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
                 try? FileManager.default.copyItem(at: source, to: target)
             }
@@ -46,7 +53,9 @@ public actor CardStore {
         fileURL = target
         cards = [:]
         loaded = false
+        refusePersist = false
         loadIfNeeded()
+        persist()
     }
 
     /// 当前库文件位置（设置页展示 / 排错用）
@@ -123,19 +132,36 @@ public actor CardStore {
     private func loadIfNeeded() {
         guard !loaded else { return }
         loaded = true
-        guard let data = try? Data(contentsOf: fileURL) else { return }
-        let list = (try? JSONDecoder().decode([AnswerCard].self, from: data)) ?? []
+        let url = fileURL
+        guard let data = try? Data(contentsOf: url), !data.isEmpty else { return }
+        guard let list = try? JSONDecoder().decode([AnswerCard].self, from: data) else {
+            refusePersist = true
+            NSLog("[Sprig] 知识库无法解析，已停止写入以免覆盖：\(url.path)")
+            return
+        }
         cards = Dictionary(uniqueKeysWithValues: list.map { ($0.id, $0) })
     }
 
     private func persist() {
+        guard !refusePersist else { return }
+        let destination = fileURL
         do {
-            try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(),
+            try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(),
                                                     withIntermediateDirectories: true)
             let data = try JSONEncoder().encode(Array(cards.values))
-            try data.write(to: fileURL, options: .atomic)
+            try data.write(to: destination, options: .atomic)
         } catch {
             NSLog("[Sprig] 卡片落盘失败: \(error)")
+            return
+        }
+        publishMarkdown()
+    }
+
+    private func publishMarkdown() {
+        do {
+            try CardMarkdown.sync(Array(cards.values), in: fileURL.deletingLastPathComponent())
+        } catch {
+            NSLog("[Sprig] Markdown 同步失败: \(error)")
         }
     }
 }

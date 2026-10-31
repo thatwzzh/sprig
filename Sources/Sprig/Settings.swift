@@ -10,15 +10,10 @@ enum Settings {
     private static let providersKey = "providerConfigs"
     private static let activeProviderKey = "activeProviderID"
     private static let cardsDirectoryKey = "cardsDirectory"
-    private static let migratedKey = "didMigrateFromLegacyBundle"
-
-    /// 旧版本只有单模型设置。留着只做两件事：迁移老配置、判断「是不是老用户」。
-    private static let legacyModelKey = "ollamaModel"
-    private static let legacyBaseURLKey = "ollamaBaseURL"
 
     // MARK: - 模型接入
 
-    /// 全部接入配置。没存过时给出内置的 Gemini + Ollama 两条。
+    /// 全部接入配置。没存过时给出内置的智谱 + Ollama 两条。
     ///
     /// 加了内存缓存：这个 getter 在流式发起的路径上被间接调用两次
     /// （`activeConfig` 里先取 `providerConfigs`、再取 `activeProviderID`，后者又取一遍），
@@ -40,9 +35,7 @@ enum Settings {
             return value
         }
         set {
-            let value = newValue.isEmpty
-                ? ProviderConfig.builtins(ollamaModel: legacyModel, ollamaBaseURL: legacyBaseURL)
-                : newValue
+            let value = newValue.isEmpty ? ProviderConfig.builtins() : newValue
             guard let data = try? JSONEncoder().encode(value) else { return }
             UserDefaults.standard.set(data, forKey: providersKey)
             // 落盘成功后再更新缓存，避免编码失败时缓存和磁盘不一致
@@ -62,7 +55,7 @@ enum Settings {
            !decoded.isEmpty {
             return decoded
         }
-        return ProviderConfig.builtins(ollamaModel: legacyModel, ollamaBaseURL: legacyBaseURL)
+        return ProviderConfig.builtins()
     }
 
     /// 当前使用的接入。存的是 UUID 字符串。
@@ -82,12 +75,9 @@ enum Settings {
         }
     }
 
-    /// 老用户（上一版写死 Ollama）继续用 Ollama，新装用户默认免费 Gemini。
+    /// 默认用智谱的免费型号。
     private static var defaultProviderID: UUID {
-        if UserDefaults.standard.object(forKey: legacyModelKey) != nil {
-            return ProviderConfig.builtinOllamaID
-        }
-        return ProviderConfig.builtinGeminiID
+        ProviderConfig.builtinZhipuID
     }
 
     static var activeConfig: ProviderConfig {
@@ -112,7 +102,234 @@ enum Settings {
         activeConfig.makeProvider(disableThinking: disableThinking)
     }
 
+    private static let readingThemeKey = "readingTheme"
+
+    /// 答案区阅读主题：default / github / newsprint
+    static var readingTheme: String {
+        get { UserDefaults.standard.string(forKey: readingThemeKey) ?? MarkdownTheme.default.id }
+        set { UserDefaults.standard.set(newValue, forKey: readingThemeKey) }
+    }
+
     private static let disableThinkingKey = "disableThinking"
+    private static let agentConfigsKey = "agentConfigs"
+    private static let activeAgentKey = "activeAgentID"
+    private static let dismissedAgentsKey = "dismissedAgentPresets"
+    private static let agentWorkspaceKey = "agentWorkspace"
+    private static let usesAgentKey = "usesAcpAgent"
+
+    // MARK: - Agent
+
+    /// 全部 agent 配置。没存过时把本机检测到的直接列出来——用户不用先「添加」。
+    static var agentConfigs: [AgentConfig] {
+        get {
+            if let data = UserDefaults.standard.data(forKey: agentConfigsKey),
+               let decoded = try? JSONDecoder().decode([AgentConfig].self, from: data) {
+                // 早期版本把模型选成了 auto（agent 自己路由、又慢又不确定），这里清成「跟随默认」
+                guard decoded.contains(where: { $0.modelID?.lowercased().hasPrefix("auto") == true }) else {
+                    return decoded
+                }
+                let cleaned = decoded.map { config -> AgentConfig in
+                    guard config.modelID?.lowercased().hasPrefix("auto") == true else { return config }
+                    var copy = config
+                    copy.modelID = nil
+                    copy.modelLabel = nil
+                    copy.modelMaxInput = nil
+                    return copy
+                }
+                if let encoded = try? JSONEncoder().encode(cleaned) {
+                    UserDefaults.standard.set(encoded, forKey: agentConfigsKey)
+                }
+                return cleaned
+            }
+            // 第一次读：先按本机检测结果铺一份，并且**立刻落盘**。
+            // 不落盘的话每次读都会生成新 UUID，选中的那条转眼就找不到了。
+            let detected = AgentDetector.detect()
+            if let data = try? JSONEncoder().encode(detected) {
+                UserDefaults.standard.set(data, forKey: agentConfigsKey)
+            }
+            return detected
+        }
+        set {
+            let value = newValue
+            guard let data = try? JSONEncoder().encode(value) else { return }
+            UserDefaults.standard.set(data, forKey: agentConfigsKey)
+            if let id = activeAgentID, !value.contains(where: { $0.id == id }) {
+                UserDefaults.standard.removeObject(forKey: activeAgentKey)
+            }
+            NotificationCenter.default.post(name: .sprigProvidersDidChange, object: nil)
+        }
+    }
+
+    /// 把新装上的 agent 并进列表，并清理已经失效的删除记录。
+    ///
+    /// 删除一个检测项时记的是预设 id；这里每次检测都会回头看一眼那个预设**现在还装不装**：
+    /// 已经卸载的就把记录清掉，于是重装之后它能自己回来（用户要的「重装自动恢复」）。
+    static func syncDetectedAgents() {
+        let detected = AgentDetector.detect()
+        let detectedPresets = Set(detected.compactMap(\.presetID))
+        var dismissed = UserDefaults.standard.stringArray(forKey: dismissedAgentsKey) ?? []
+        let alive = dismissed.filter { detectedPresets.contains($0) }
+        if alive != dismissed {
+            dismissed = alive
+            UserDefaults.standard.set(dismissed, forKey: dismissedAgentsKey)
+        }
+
+        var configs = agentConfigs
+        var changed = false
+        for item in detected {
+            if let preset = item.presetID, dismissed.contains(preset) { continue }
+            if let index = configs.firstIndex(where: {
+                $0.command == item.command || ($0.presetID != nil && $0.presetID == item.presetID)
+            }) {
+                // 检测项的名字和命令在弹窗里是只读的，所以每次都以预设为准刷新一遍：
+                // 预设改名、或 app 换了位置，标签跟着变。
+                guard configs[index].presetID == item.presetID else { continue }
+                if configs[index].name != item.name { configs[index].name = item.name; changed = true }
+                if configs[index].command != item.command { configs[index].command = item.command; changed = true }
+                continue
+            }
+            configs.append(item)
+            changed = true
+        }
+        if changed { agentConfigs = configs }
+    }
+
+    /// 删掉一条配置。自动检测出来的记下预设 id，下次检测不再加回来。
+    static func removeAgent(id: UUID) {
+        var configs = agentConfigs
+        guard let index = configs.firstIndex(where: { $0.id == id }) else { return }
+        let removed = configs.remove(at: index)
+        if let preset = removed.presetID {
+            var dismissed = UserDefaults.standard.stringArray(forKey: dismissedAgentsKey) ?? []
+            if !dismissed.contains(preset) { dismissed.append(preset) }
+            UserDefaults.standard.set(dismissed, forKey: dismissedAgentsKey)
+        }
+        agentConfigs = configs
+    }
+
+    static func upsertAgent(_ config: AgentConfig) {
+        var configs = agentConfigs
+        if let index = configs.firstIndex(where: { $0.id == config.id }) {
+            configs[index] = config
+        } else {
+            configs.append(config)
+        }
+        agentConfigs = configs
+    }
+
+    /// 每个 agent 上次读到的模型清单。存在 UserDefaults 里，重开设置页不用再握手一次。
+    static func cachedModels(for id: UUID) -> [AcpModel] {
+        guard let data = UserDefaults.standard.data(forKey: modelsKey(for: id)),
+              let list = try? JSONDecoder().decode([AcpModel].self, from: data) else { return [] }
+        return list
+    }
+
+    static func setCachedModels(_ models: [AcpModel], for id: UUID) {
+        guard let data = try? JSONEncoder().encode(models) else { return }
+        UserDefaults.standard.set(data, forKey: modelsKey(for: id))
+    }
+
+    private static func modelsKey(for id: UUID) -> String {
+        "agentModels.\(id.uuidString)"
+    }
+
+    /// agent 暴露的会话选项（思考强度等），和模型清单一起缓存
+    static func cachedOptions(for id: UUID) -> [AcpConfigOption] {
+        guard let data = UserDefaults.standard.data(forKey: optionsKey(for: id)),
+              let list = try? JSONDecoder().decode([AcpConfigOption].self, from: data) else { return [] }
+        return list
+    }
+
+    static func setCachedOptions(_ options: [AcpConfigOption], for id: UUID) {
+        guard let data = try? JSONEncoder().encode(options) else { return }
+        UserDefaults.standard.set(data, forKey: optionsKey(for: id))
+    }
+
+    private static func optionsKey(for id: UUID) -> String {
+        "agentOptions.\(id.uuidString)"
+    }
+
+    /// 面板当前用哪一条。存 UUID 字符串。
+    static var activeAgentID: UUID? {
+        get {
+            let configs = agentConfigs
+            guard !configs.isEmpty else { return nil }
+            if let raw = UserDefaults.standard.string(forKey: activeAgentKey),
+               let uuid = UUID(uuidString: raw),
+               configs.contains(where: { $0.id == uuid }) {
+                return uuid
+            }
+            return configs[0].id
+        }
+        set {
+            if let newValue {
+                UserDefaults.standard.set(newValue.uuidString, forKey: activeAgentKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: activeAgentKey)
+            }
+            NotificationCenter.default.post(name: .sprigProvidersDidChange, object: nil)
+        }
+    }
+
+    static var activeAgent: AgentConfig? {
+        let configs = agentConfigs
+        guard !configs.isEmpty else { return nil }
+        guard let id = activeAgentID else { return configs.first }
+        return configs.first { $0.id == id } ?? configs.first
+    }
+
+    /// 面板当前是把问题交给 ACP agent，而不是交给上面的模型接入。
+    static var usesAgent: Bool {
+        get { UserDefaults.standard.bool(forKey: usesAgentKey) }
+        set {
+            UserDefaults.standard.set(newValue, forKey: usesAgentKey)
+            NotificationCenter.default.post(name: .sprigProvidersDidChange, object: nil)
+        }
+    }
+
+    /// 当前 agent 的启动命令。旧代码只认这一个值，继续给它。
+    static var acpCommand: String {
+        get { activeAgent?.command ?? "" }
+        set {
+            var configs = agentConfigs
+            guard let id = activeAgentID, let index = configs.firstIndex(where: { $0.id == id }) else { return }
+            configs[index].command = newValue
+            agentConfigs = configs
+        }
+    }
+
+    /// 当前 agent 的工作目录。空字符串表示用默认目录。
+    ///
+    /// 所有 agent 共用一个：换 agent 不该顺带换工作目录，那只会让人找不到上次的文件。
+    static var agentWorkspace: String {
+        get { UserDefaults.standard.string(forKey: agentWorkspaceKey) ?? "" }
+        set {
+            UserDefaults.standard.set(newValue, forKey: agentWorkspaceKey)
+            NotificationCenter.default.post(name: .sprigProvidersDidChange, object: nil)
+        }
+    }
+
+    static var acpReady: Bool {
+        !acpCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// 没填工作目录时用这个。和知识库的 repository 并列，agent 的文件不要写进卡片库。
+    static var defaultAgentWorkspace: String {
+        sprigDirectory.appendingPathComponent("workspaces", isDirectory: true).path
+    }
+
+    static func workspacePath(for raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let path = ((trimmed.isEmpty ? defaultAgentWorkspace : trimmed) as NSString).expandingTildeInPath
+        if trimmed.isEmpty {
+            try? FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+        }
+        return path
+    }
+
+    static var acpWorkspacePath: String {
+        workspacePath(for: agentWorkspace)
+    }
 
     /// 默认关闭推理模型的思考链——知识问答要的是快和直接，思考过程既慢又没用。
     /// 用 object(forKey:) 判存在，因为「没存过」要当作 true，而 bool(forKey:) 会返回 false。
@@ -129,76 +346,8 @@ enum Settings {
 
     static func selectProvider(id: UUID) {
         guard providerConfigs.contains(where: { $0.id == id }) else { return }
+        if usesAgent { usesAgent = false }
         activeProviderID = id
-    }
-
-    /// 保证「本地」分类始终有一条 Ollama。
-    /// 用户可能把内置那条改成别的协议（改 Base URL 到 api.openai.com 之类），
-    /// 那样本地区域会空着——本地推理是常用入口，不能让它消失。
-    static func ensureLocalConfig() {
-        var configs = providerConfigs
-
-        // 按 kind 判断而不是 resolvedCategory：category 字段可能是 nil（旧数据）
-        // 或被中途改过，只靠它会在每次启动时都判定"没有本地"，越补越多。
-        if let index = configs.firstIndex(where: { $0.kind == .ollama }) {
-            // 已有就不再新增，只把分类补正
-            guard configs[index].category != .local else { return }
-            configs[index].category = .local
-            providerConfigs = configs
-            return
-        }
-
-        configs.append(ProviderConfig(name: "Ollama 本地",
-                                      kind: .ollama,
-                                      baseURL: ProviderConfig.Kind.ollama.defaultBaseURL,
-                                      model: ProviderConfig.Kind.ollama.defaultModel,
-                                      category: .local))
-        providerConfigs = configs
-    }
-
-    /// 老用户升级后没有智谱这条内置接入，补一条（key 留空，等他去填）。
-    /// 只在完全没有智谱配置时才加，避免和用户自建的重复。
-    static func ensureZhipuConfig() {
-        guard !providerConfigs.contains(where: { $0.baseURL.lowercased().contains("bigmodel") }) else { return }
-        var configs = providerConfigs
-        configs.append(ProviderConfig(id: ProviderConfig.builtinZhipuID,
-                                      name: "智谱 GLM（免费）",
-                                      kind: .openAICompatible,
-                                      baseURL: "https://open.bigmodel.cn/api/paas/v4",
-                                      model: "glm-4.7-flash",
-                                      isBuiltin: true,
-                                      contextLength: 204_800,
-                                      category: .free))
-        providerConfigs = configs
-    }
-
-    /// Gemini 下线旧模型时（如 2.5-flash → 3.8-flash），存量配置不会自动跟着换，
-    /// 否则调用会一直 404。这里把已知下线的换成本代默认值。
-    static func migrateRetiredGeminiModels() {
-        let retired = ["gemini-2.5-flash", "gemini-2.5-pro"]
-        var configs = providerConfigs
-        var changed = false
-        for index in configs.indices where configs[index].kind == .gemini {
-            guard retired.contains(configs[index].model) else { continue }
-            configs[index].model = ProviderConfig.Kind.gemini.defaultModel
-            changed = true
-        }
-        guard changed else { return }
-        providerConfigs = configs
-    }
-
-    /// 老配置里没有 contextLength 字段，按 kind 能确定的补上。
-    /// 不补的话，用云端模型时上下文预算会退回保守的 12000 字，白白浪费窗口。
-    static func backfillContextLengths() {
-        var configs = providerConfigs
-        var changed = false
-        for index in configs.indices where configs[index].contextLength == nil {
-            guard let known = configs[index].kind.knownContextLength else { continue }
-            configs[index].contextLength = known
-            changed = true
-        }
-        guard changed else { return }
-        providerConfigs = configs
     }
 
     /// 把探测到的 Ollama 模型写进内置 Ollama 项。
@@ -242,9 +391,6 @@ enum Settings {
             HTTPClient.proxy = trimmed
         }
     }
-    /// 早期只有一个搜索 Key，切后端时留作兼容
-    private static let legacyWebSearchKey = "webSearchAPIKey"
-
     /// 是否让模型自己决定要不要联网搜。默认关——开着会花搜索额度。
     static var webSearchEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: webSearchEnabledKey) }
@@ -271,11 +417,7 @@ enum Settings {
         get {
             switch searchBackend {
             case .tavily:
-                // 旧版本只有一个搜索 Key，第一次读时接过来
-                if let value = UserDefaults.standard.string(forKey: tavilyAPIKeyKey) {
-                    return value
-                }
-                return UserDefaults.standard.string(forKey: legacyWebSearchKey) ?? ""
+                return UserDefaults.standard.string(forKey: tavilyAPIKeyKey) ?? ""
             case .deepseek:
                 return UserDefaults.standard.string(forKey: deepseekSearchKeyKey) ?? ""
             }
@@ -296,7 +438,7 @@ enum Settings {
             && !webSearchAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    // MARK: - 免费模型（OpenRouter）
+    // MARK: - 免费模型（智谱）
 
     private static let freeModelsLastSyncKey = "freeModelsLastSync"
     private static let freeModelsCountKey = "freeModelsCount"
@@ -309,11 +451,6 @@ enum Settings {
     /// 上次同步时拿到的免费模型数量
     static var freeModelsCount: Int {
         UserDefaults.standard.integer(forKey: freeModelsCountKey)
-    }
-
-    /// 是否已经有一条 OpenRouter 免费接入
-    static var hasFreeModelConfig: Bool {
-        providerConfigs.contains { $0.id == ProviderConfig.builtinOpenRouterFreeID }
     }
 
     /// 超过一天就该重新拉一次
@@ -347,8 +484,8 @@ enum Settings {
             guard !models.isEmpty else { continue }
             total = models.count
 
-            // 只有 OpenAI 兼容能这样探活。Gemini 的接口形状不同，
-            // 逐个探会把免费额度打光；Ollama 的模型就在本机，不存在调不通。
+            // 只有 OpenAI 兼容能这样探活。智谱的免费型号不在 /models 里，
+            // 逐个探会把额度打光；Ollama 的模型就在本机，不存在调不通。
             var keep = models
             let isZhipu = config.baseURL.lowercased().contains("bigmodel")
             if config.kind == .openAICompatible && !isZhipu {
@@ -396,29 +533,11 @@ enum Settings {
         case .ollama:
             let base = URL(string: config.baseURL) ?? URL(string: ProviderConfig.Kind.ollama.defaultBaseURL)!
             return await OllamaProvider.availableModels(baseURL: base)
-        case .gemini:
-            let all = await GeminiProvider.availableModels(apiKey: config.apiKey)
-            // 列表里混着 tts / image / live / native-audio 这些专用模型，不能拿来对话
-            let blocked = ["tts", "image", "live", "native-audio", "deep-research", "lyria", "embedding"]
-            return all.filter { name in
-                let lower = name.lowercased()
-                guard lower.contains("flash") || lower.contains("pro") else { return false }
-                return !blocked.contains { lower.contains($0) }
-            }
         case .openAICompatible:
             // 智谱的 /models 只返回付费型号（glm-4.5 ~ glm-5.3），
             // 真正免费的 glm-4.7-flash 不在里面。硬编码，别让同步把用户切到要钱的模型。
             if config.baseURL.lowercased().contains("bigmodel") {
                 return ["glm-4.7-flash"]
-            }
-            // 只有 OpenRouter 走它那套「免费清单 + 非对话模型过滤」。
-            // 其他 OpenAI 兼容网关（智谱等）走标准的 /models —— 之前一律按
-            // OpenRouter 处理，导致智谱拉回了 OpenRouter 的模型名。
-            if config.baseURL.lowercased().contains("openrouter") {
-                guard let free = try? await FreeModelCatalog.openRouterFreeModels() else { return [] }
-                return free
-                    .filter { !FreeModelCatalog.isNonChatModel($0.id) }
-                    .map(\.id)
             }
             let base = URL(string: config.baseURL)
                 ?? URL(string: ProviderConfig.Kind.openAICompatible.defaultBaseURL)!
@@ -430,14 +549,14 @@ enum Settings {
 
     // MARK: - 知识库目录
 
-    /// 知识库（卡片 JSON）所在目录，默认 ~/Documents/Sprig
-    static var defaultCardsDirectory: URL {
+    /// ~/Documents/Sprig。知识库和工作区都放在它下面。
+    private static var sprigDirectory: URL {
         documentsDirectory.appendingPathComponent(AppInfo.englishName, isDirectory: true)
     }
 
-    /// 上一版默认目录 ~/Documents/a，只用于把老数据搬到新默认位置
-    private static var previousDefaultCardsDirectory: URL {
-        documentsDirectory.appendingPathComponent("a", isDirectory: true)
+    /// 知识库（卡片 JSON）所在目录，默认 ~/Documents/Sprig/repository
+    static var defaultCardsDirectory: URL {
+        sprigDirectory.appendingPathComponent("repository", isDirectory: true)
     }
 
     private static var documentsDirectory: URL {
@@ -455,55 +574,9 @@ enum Settings {
         set { UserDefaults.standard.set(newValue.path, forKey: cardsDirectoryKey) }
     }
 
-    // MARK: - 旧设置
-
-    private static var legacyModel: String {
-        UserDefaults.standard.string(forKey: legacyModelKey) ?? ""
-    }
-
-    private static var legacyBaseURL: String {
-        UserDefaults.standard.string(forKey: legacyBaseURLKey) ?? ""
-    }
-
-    /// 包名从 com.catking.conceptlens 换成 com.catking.sprig 后，UserDefaults 域也跟着换了，
-    /// 这里把旧的模型 / 地址 / 目录 / 已录制的快捷键搬过来，避免升级后设置被重置。
-    /// 必须在读取任何设置、注册快捷键之前调用。
-    static func migrateLegacyDefaultsIfNeeded() {
-        let defaults = UserDefaults.standard
-        guard !defaults.bool(forKey: migratedKey) else { return }
-        defaults.set(true, forKey: migratedKey)
-
-        for identifier in AppInfo.legacyBundleIdentifiers {
-            guard let legacy = UserDefaults(suiteName: identifier) else { continue }
-            for (key, value) in legacy.dictionaryRepresentation() where isMigratableKey(key) {
-                guard defaults.object(forKey: key) == nil else { continue }
-                defaults.set(value, forKey: key)
-            }
-            defaults.set(identifier, forKey: "migratedFromBundle")
-            break   // 只搬最近的一个有数据的旧域
-        }
-    }
-
-    /// 系统写入的键（NS*/Apple*）不搬，其余自有设置整份搬过来
-    private static func isMigratableKey(_ key: String) -> Bool {
-        if key.hasPrefix("NS") || key.hasPrefix("Apple") || key == migratedKey { return false }
-        return true
-    }
-
-    /// 默认目录从 ~/Documents/a 换成 ~/Documents/Sprig 后，把旧默认目录里的库搬过去。
-    /// 用户自己选过目录时不碰。
-    static func prepareCardsDirectory() {
-        guard UserDefaults.standard.string(forKey: cardsDirectoryKey) == nil else { return }
-
-        let manager = FileManager.default
-        let targetDirectory = defaultCardsDirectory
-        let target = targetDirectory.appendingPathComponent(CardStore.fileName)
-        guard !manager.fileExists(atPath: target.path) else { return }
-
-        let source = previousDefaultCardsDirectory.appendingPathComponent(CardStore.fileName)
-        guard manager.fileExists(atPath: source.path) else { return }
-
-        try? manager.createDirectory(at: targetDirectory, withIntermediateDirectories: true)
-        try? manager.copyItem(at: source, to: target)
+    /// 没填工作目录时，启动就建好默认目录，免得第一次提问才发现文件夹不存在。
+    static func prepareAgentWorkspace() {
+        guard agentWorkspace.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        try? FileManager.default.createDirectory(atPath: defaultAgentWorkspace, withIntermediateDirectories: true)
     }
 }

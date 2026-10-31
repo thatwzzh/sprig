@@ -1,4 +1,4 @@
-// 由 assets/logo/build.py 生成，请勿手改；要改几何请改 build.py 后重新生成。
+// 几何与 assets/logo/sprig-menubar.svg 同源（64 网格，缩到 18pt）。改形状先改 SVG，再同步这里的路径。
 import AppKit
 
 /// 菜单栏品牌图标：一枝两叶。18×18 画布，模板图，随菜单栏深浅自动反色。

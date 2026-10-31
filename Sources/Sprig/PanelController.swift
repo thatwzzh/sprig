@@ -5,10 +5,15 @@ import SprigCore
 final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
     static let shared = PanelController()
 
+    /// 后台跑失败的卡：错误先存在这里，等用户切回这张卡再显示（不落盘）
+    private var backgroundErrors: [UUID: String] = [:]
+
     private struct Node {
         var card: AnswerCard
         var raw: String
         var scroll: CGFloat
+        /// 报错文案只用于当前面板显示：不写进 card.answer，也就不会被同步进 Markdown
+        var errorText: String? = nil
     }
 
     private(set) var panel: QuickPanel
@@ -46,9 +51,20 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
 
     private var pendingSelection = ""
     private var pendingDelete: AnswerCard?
+    /// 思考强度菜单当前对应的 agent
+    private var thinkingMenuAgentID: UUID?
     /// 「追问」时记住要挂到哪张卡下面
     private var pendingParentID: UUID?
     private var pendingParentSelection: String?
+
+    private struct PermissionWait {
+        var id: UUID
+        var ask: AcpPermissionAsk
+        var resume: (AcpPermissionOutcome) -> Void
+    }
+
+    private var permissionQueue: [PermissionWait] = []
+    private var activePermission: PermissionWait?
 
     private var scrollObserver: NSObjectProtocol?
     private var keyMonitor: Any?
@@ -93,12 +109,13 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
 
         content.onTreeToggle = { [weak self] in self?.toggleTree() }
         content.onSearchToggle = { [weak self] in self?.toggleWebSearch() }
+        content.onThinkingTap = { [weak self] in self?.showThinkingMenu() }
 
         content.modelButton.target = self
         content.modelButton.action = #selector(showModelMenu)
         refreshModelButton()
 
-        // 设置页改了接入配置 / 在其他地方切了模型，按钮跟着更新
+        // 设置页改了接入配置 / 换了阅读主题，面板立刻重排
         NotificationCenter.default.addObserver(
             forName: .sprigProvidersDidChange,
             object: nil,
@@ -107,6 +124,10 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
             DispatchQueue.main.async {
                 self?.refreshModelButton()
                 self?.content.refreshSearchToggle()
+                // 换主题时立刻重排当前答案
+                if let self, !self.isStreaming, !self.stack.isEmpty {
+                    self.renderCurrent()
+                }
             }
         }
 
@@ -306,9 +327,15 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         applyHeights(animated: false)
     }
 
+    /// 思考强度标签会改宽度，输入框可用宽度不能再用 Theme 里的常量
+    private var inputTextWidth: CGFloat {
+        let width = content.inputScroll.frame.width
+        return width > 1 ? width : Theme.inputTextWidth
+    }
+
     private func measuredInputHeight() -> CGFloat {
         measuredHeight(for: inputView,
-                       width: Theme.inputTextWidth,
+                       width: inputTextWidth,
                        min: Theme.inputMinHeight,
                        max: Theme.inputMaxHeight)
     }
@@ -356,7 +383,7 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
                            bottom: answerHeight > 0 ? bottomHeight : 0)
 
         inputView.frame = NSRect(x: 0, y: 0,
-                                 width: max(1, Theme.inputTextWidth),
+                                 width: max(1, inputTextWidth),
                                  height: max(inputHeight, 24))
         bottomInput.frame = NSRect(x: 0, y: 0,
                                    width: max(1, Theme.panelWidth - Theme.horizontalInset * 2),
@@ -420,6 +447,8 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
     /// 输入框右侧的联网搜索开关。
     /// 没配 Key 时直接打开设置——比让用户点一下没反应、再自己找原因强。
     func toggleWebSearch() {
+        // agent 模式不接管搜索：开关状态也保持关闭的外观
+        guard !Settings.usesAgent else { return }
         guard !Settings.webSearchAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             SettingsWindowController.shared.present()
             return
@@ -482,7 +511,117 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
 
     // MARK: - 模型切换
 
+    private func showThinkingMenu() {
+        guard Settings.usesAgent, let agent = Settings.activeAgent else { return }
+        guard let option = Settings.cachedOptions(for: agent.id).first(where: { $0.isThoughtLevel }),
+              !option.choices.isEmpty else { return }
+
+        thinkingMenuAgentID = agent.id
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let current = agent.thoughtLevel
+
+        let auto = NSMenuItem(title: "不干预（agent 默认：\(option.currentValue)）",
+                              action: #selector(pickThoughtLevel(_:)), keyEquivalent: "")
+        auto.target = self
+        auto.representedObject = nil
+        auto.state = current == nil ? .on : .off
+        menu.addItem(auto)
+        menu.addItem(.separator())
+
+        for choice in option.choices {
+            let item = NSMenuItem(title: choice.name, action: #selector(pickThoughtLevel(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = choice.value
+            item.state = current == choice.value ? .on : .off
+            menu.addItem(item)
+        }
+        menu.popUp(positioning: nil,
+                   at: NSPoint(x: content.thinkingButton.frame.minX,
+                               y: content.thinkingButton.frame.minY - 4),
+                   in: content)
+    }
+
+    /// 用一两个字表示档位，跟着图标一起显示，不用点开菜单也知道当前值
+    private static func shortThoughtName(_ value: String) -> String {
+        switch value.lowercased() {
+        case "minimal": return "极低"
+        case "low": return "低"
+        case "medium": return "中"
+        case "high": return "高"
+        case "xhigh", "very_high": return "很高"
+        case "max": return "最高"
+        case "enabled": return "开"
+        case "none", "disabled": return "关"
+        default: return value
+        }
+    }
+
+    @objc private func pickThoughtLevel(_ sender: NSMenuItem) {
+        guard let id = thinkingMenuAgentID,
+              var agent = Settings.agentConfigs.first(where: { $0.id == id }) else { return }
+        agent.thoughtLevel = sender.representedObject as? String
+        Settings.upsertAgent(agent)
+        refreshThinkingButton()
+    }
+
+    private var thoughtDiscovery: UUID?
+
+    /// 只有 agent 暴露 thought_level/reasoning_effort 时才显示这个按钮。
+    /// 缓存为空时顺手去问一次 agent（下次点开菜单就有了）。
+    private func refreshThinkingButton() {
+        let button = content.thinkingButton
+        guard Settings.usesAgent, let agent = Settings.activeAgent else {
+            button.isHidden = true
+            return
+        }
+        if Settings.cachedOptions(for: agent.id).isEmpty, thoughtDiscovery != agent.id {
+            thoughtDiscovery = agent.id
+            let command = agent.command
+            Task { @MainActor [weak self] in
+                let client = AcpClient()
+                let start = try? await client.discover(commandLine: command,
+                                                       cwd: Settings.acpWorkspacePath,
+                                                       path: AcpEnvironment.searchPath())
+                await client.shutdown()
+                if let start {
+                    Settings.setCachedModels(start.models, for: agent.id)
+                    Settings.setCachedOptions(start.options, for: agent.id)
+                }
+                self?.thoughtDiscovery = nil
+                self?.refreshThinkingButton()
+            }
+        }
+        guard let option = Settings.cachedOptions(for: agent.id).first(where: { $0.isThoughtLevel }),
+              !option.choices.isEmpty else {
+            button.isHidden = true
+            return
+        }
+        button.isHidden = false
+        let current = agent.thoughtLevel ?? option.currentValue
+        let name = option.choices.first { $0.value == current }?.name ?? current
+        button.title = agent.thoughtLevel == nil ? "" : Self.shortThoughtName(agent.thoughtLevel ?? "")
+        button.toolTip = agent.thoughtLevel == nil
+            ? "思考强度：跟随 agent 默认（\(name)），点击切换"
+            : "思考强度：\(name)（下一问生效，点击切换）"
+        button.contentTintColor = agent.thoughtLevel == nil ? .secondaryLabelColor : .controlAccentColor
+        content.needsLayout = true
+    }
+
     private func refreshModelButton() {
+        // 切到 agent / 切回模型后，搜索开关的可用状态要跟着变
+        defer { content.refreshSearchToggle() }
+        if Settings.usesAgent, let agent = Settings.activeAgent, Settings.acpReady {
+            // 选了具体模型就把模型名顶到前面：这是切换后最想知道的信息
+            content.modelButton.label = agent.modelLabel.map { "ACP · \($0)" } ?? "ACP · \(agent.displayName)"
+            content.modelButton.toolTip = "由 ACP agent 回答：\(agent.command)"
+                + (agent.modelLabel.map { "\n模型：\($0)" } ?? "")
+            refreshThinkingButton()
+            return
+        }
+        if Settings.usesAgent {
+            Settings.usesAgent = false
+        }
         let config = Settings.activeConfig
         content.modelButton.label = config.modelLabel
         content.modelButton.toolTip = "\(config.displayName) · \(config.modelLabel)"
@@ -502,6 +641,27 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         let menu = NSMenu()
         menu.autoenablesItems = false
 
+        let agentHeader = NSMenuItem(title: "Agent", action: nil, keyEquivalent: "")
+        agentHeader.isEnabled = false
+        menu.addItem(agentHeader)
+        let agents = Settings.agentConfigs
+        if agents.isEmpty {
+            let empty = NSMenuItem(title: "还没有 agent，去设置里加一条", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            menu.addItem(empty)
+        }
+        for agent in agents {
+            let item = NSMenuItem(title: "ACP · \(agent.displayName)",
+                                  action: #selector(pickAgent(_:)),
+                                  keyEquivalent: "")
+            item.target = self
+            item.representedObject = agent.id.uuidString
+            item.state = Settings.usesAgent && Settings.activeAgentID == agent.id ? .on : .off
+            item.toolTip = agent.command
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
+
         for category in ProviderConfig.Category.allCases {
             // 没填 key / 没填模型的不进菜单：点不动，只会让列表变长
             let group = configs
@@ -517,7 +677,9 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
                 for model in config.selectableModels {
                     menu.addItem(modelItem(config: config,
                                            model: model,
-                                           isActive: config.id == activeID && model == activeModel))
+                                           isActive: !Settings.usesAgent
+                                               && config.id == activeID
+                                               && model == activeModel))
                 }
             }
             menu.addItem(.separator())
@@ -559,6 +721,16 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         }
         Settings.selectProvider(id: id)
         refreshModelButton()
+    }
+
+    @objc private func pickAgent(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let id = UUID(uuidString: raw),
+              Settings.agentConfigs.contains(where: { $0.id == id }) else { return }
+        Settings.activeAgentID = id
+        Settings.usesAgent = true
+        refreshModelButton()
+        panel.makeKey()
     }
 
     @objc private func selectProvider(_ sender: NSMenuItem) {
@@ -670,7 +842,7 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         // 按模型真实窗口算预算；开了联网搜索就先扣掉一轮搜索的空间
         let activeConfig = Settings.activeConfig
         let policy = ContextAssembler.Policy.dynamic(
-            contextTokens: activeConfig.contextLength,
+            contextTokens: contextBudgetTokens,
             isLocal: activeConfig.kind.isLocal,
             toolReserve: Settings.webSearchReady ? 3_000 : 0)
         let context = ContextAssembler.context(path: contextPath(upTo: parentIndex),
@@ -691,6 +863,41 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
             ChatMessage.system(Prompt.contextual),
             .user(message),
         ], owner: card.id)
+    }
+
+    /// 报错后点「重试」：用同一张卡、同样的上下文重新问一次，不新建节点。
+    private func retryTurn() {
+        guard !isStreaming, let node = stack.last else { return }
+        let card = node.card
+        let messages: [ChatMessage]
+        if let parentID = card.parentID,
+           let parentIndex = stack.firstIndex(where: { $0.card.id == parentID }) {
+            let activeConfig = Settings.activeConfig
+            let policy = ContextAssembler.Policy.dynamic(
+                contextTokens: contextBudgetTokens,
+                isLocal: activeConfig.kind.isLocal,
+                toolReserve: Settings.webSearchReady ? 3_000 : 0)
+            let context = ContextAssembler.context(path: contextPath(upTo: parentIndex), policy: policy)
+            let message = Prompt.childMessage(context: context,
+                                              selection: card.selectedText,
+                                              question: card.question.isEmpty ? nil : card.question)
+            messages = [ChatMessage.system(Prompt.contextual), .user(message)]
+        } else {
+            messages = [ChatMessage.system(Prompt.answer), .user(card.question)]
+        }
+
+        let index = stack.count - 1
+        stack[index].raw = ""
+        stack[index].errorText = nil
+        backgroundErrors[card.id] = nil
+        renderCurrent(placeholder: true)
+        startStreaming(messages: messages, owner: card.id)
+    }
+
+    /// 上下文预算用的窗口：agent 模式按它自己报的模型窗口算，否则按接入配置。
+    /// agent 没选具体模型时返回 nil，交给 Policy 用保守默认。
+    private var contextBudgetTokens: Int? {
+        Settings.usesAgent ? Settings.activeAgent?.modelMaxInput : Settings.activeConfig.contextLength
     }
 
     private func contextPath(upTo index: Int) -> [ContextAssembler.Node] {
@@ -721,21 +928,28 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
 
     // MARK: - 流式
 
+    /// 错误文案 + 末尾的「重试」链接：首次失败和切卡回来重渲染共用
+    private func applyError(_ message: String) {
+        apply(.text(message))
+        answerView.appendRetryLink()
+    }
+
     private func startStreaming(messages: [ChatMessage], owner: UUID) {
+        // 重试同一个节点时先把上一轮的报错清掉
+        if let index = stack.firstIndex(where: { $0.card.id == owner }) {
+            stack[index].errorText = nil
+        }
+        if Settings.usesAgent {
+            startAgentStreaming(messages: messages, owner: owner)
+            return
+        }
         // 没填 key 就不发请求了，否则用户只能看到一条 401，比直接说清楚难懂得多
         let config = Settings.activeConfig
         guard config.isConfigured else {
-            isStreaming = false
-            answerView.clearThinkingPlaceholder()
             let message = "\n\n⚠️ 「\(config.displayName)」还没配好："
                 + (config.kind.needsAPIKey ? "缺 API Key。" : "模型名是空的。")
                 + "\n点右上角的模型按钮切一个能用的，或进「设置…」补上后重试。"
-            apply(.text(message))
-            if !stack.isEmpty { stack[stack.count - 1].raw += message }
-            answerHeight = measuredAnswerHeight()
-            applyHeights(animated: true)
-            answerView.scrollToBottom()
-            persistCurrentCard()
+            showLocalError(message)
             return
         }
 
@@ -854,6 +1068,118 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
                 self.fail(owner: ownerID, error: error)
             }
         }
+    }
+
+    /// 把这一问交给 ACP agent。只转发用户说的话；工具、推理和许可都在 agent 进程里。
+    private func startAgentStreaming(messages: [ChatMessage], owner: UUID) {
+        guard Settings.acpReady else {
+            showLocalError("\n\n⚠️ 还没接入 ACP agent。\n点右上角的模型按钮，选「接入 ACP Agent…」，填启动命令，例如 agent acp。")
+            return
+        }
+        guard let text = AcpCodec.forwardText(from: messages) else {
+            showLocalError("\n\n⚠️ 这一轮没有要发给 agent 的问题。")
+            return
+        }
+
+        isStreaming = true
+        parser = TermParser()
+        pendingSegments.removeAll()
+        seenTerms.removeAll()
+
+        let prompt = text + AcpCodec.termHint
+        let command = Settings.acpCommand
+        let cwd = Settings.acpWorkspacePath
+        let path = AcpEnvironment.searchPath()
+        let modelID = Settings.activeAgent?.modelID
+        let ownerID = owner
+        streamTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let stream = await AcpClient.shared.ask(text: prompt,
+                                                    commandLine: command,
+                                                    cwd: cwd,
+                                                    path: path,
+                                                    model: modelID,
+                                                    thoughtLevel: Settings.activeAgent?.thoughtLevel,
+                                                    permission: { ask in
+                await PanelController.shared.requestPermission(ask)
+            }, onAuthURL: { url in
+                Task { @MainActor in
+                    NSWorkspace.shared.open(url)
+                }
+            })
+            do {
+                for try await chunk in stream {
+                    if Task.isCancelled { return }
+                    self.consume(chunk, owner: ownerID)
+                }
+                if Task.isCancelled { return }
+                self.finish(owner: ownerID)
+            } catch {
+                if Task.isCancelled { return }
+                self.fail(owner: ownerID, error: error)
+            }
+        }
+    }
+
+    private func showLocalError(_ message: String) {
+        isStreaming = false
+        answerView.clearThinkingPlaceholder()
+        showError(message)
+    }
+
+    /// Agent 的 `session/request_permission`。选项原样摆出来，知枝不预先允许或拒绝。
+    func requestPermission(_ ask: AcpPermissionAsk) async -> AcpPermissionOutcome {
+        let id = UUID()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                if Task.isCancelled {
+                    continuation.resume(returning: .cancelled)
+                    return
+                }
+                permissionQueue.append(PermissionWait(id: id, ask: ask) { outcome in
+                    continuation.resume(returning: outcome)
+                })
+                pumpPermission()
+            }
+        } onCancel: {
+            Task { @MainActor in
+                PanelController.shared.cancelPermission(id)
+            }
+        }
+    }
+
+    private func pumpPermission() {
+        guard activePermission == nil, !permissionQueue.isEmpty else { return }
+        let next = permissionQueue.removeFirst()
+        activePermission = next
+        content.permissionBar.onPick = { [weak self] optionID in
+            self?.resolvePermission(.selected(optionID))
+        }
+        content.showPermission(title: "需要许可 · \(next.ask.title)",
+                               detail: next.ask.detail,
+                               options: next.ask.options.map { ($0.id, $0.name) })
+    }
+
+    private func resolvePermission(_ outcome: AcpPermissionOutcome) {
+        guard let current = activePermission else { return }
+        activePermission = nil
+        content.hidePermission()
+        current.resume(outcome)
+        pumpPermission()
+    }
+
+    private func cancelPermission(_ id: UUID) {
+        if activePermission?.id == id {
+            resolvePermission(.cancelled)
+            return
+        }
+        guard let index = permissionQueue.firstIndex(where: { $0.id == id }) else { return }
+        let waiting = permissionQueue.remove(at: index)
+        waiting.resume(.cancelled)
+    }
+
+    private func dismissPermission() {
+        resolvePermission(.cancelled)
     }
 
     /// 429 时切到下一个候选模型，并让输入框右侧的胶囊立刻反映出来。
@@ -983,8 +1309,10 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
     /// 流式失败。后台任务不弹提示到面板上，只记进卡片。
     private func fail(owner: UUID, error: Error) {
         guard stack.last?.card.id == owner else {
-            let raw = (backgroundRaw[owner] ?? "") + "\n\n⚠️ \(error.localizedDescription)"
+            // 和前台一样：报错不写进卡片，只把已经生成的部分存下来
+            let raw = backgroundRaw[owner] ?? ""
             backgroundRaw[owner] = nil
+            backgroundErrors[owner] = "\n\n⚠️ \(error.localizedDescription)"
             Task { @MainActor in
                 if var card = await CardStore.shared.card(id: owner) {
                     card.answer = raw
@@ -1013,7 +1341,13 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         pendingSegments.removeAll()
 
         answerView.clearThinkingPlaceholder()
-        for segment in segments { apply(segment) }
+        // 流式期间也按 Markdown 重画全文：否则用户会先看到 ** 和 ```，收尾才变排版。
+        // 每次 flush 是一次全量解析，答案量级（几千字）下开销可以忽略。
+        if let raw = stack.last?.raw, !raw.isEmpty {
+            answerView.renderRich(raw)
+        } else {
+            for segment in segments { apply(segment) }
+        }
 
         // 流式过程中高度只增不减：换行时行数会 ±1，
         // 若每次都跟着回落，面板就会忽高忽低。内容只增不减，没有变矮的理由。
@@ -1085,6 +1419,11 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
             applyHeights(animated: true)
             answerView.scrollToBottom()
         }
+        // 流式期间是纯文本追加，收尾时按 Markdown 重画一遍
+        if let raw = stack.last?.raw, !raw.isEmpty {
+            renderCurrent()
+        }
+        dumpSnapshotIfRequested()
         persistCurrentCard()
         updateSelectionBar()
     }
@@ -1092,14 +1431,42 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
     private func failStreaming(_ error: Error) {
         isStreaming = false
         answerView.clearThinkingPlaceholder()
+        dismissPermission()
         let config = Settings.activeConfig
-        let message = "\n\n⚠️ \(error.localizedDescription)\n\(troubleshootingHint(for: config))"
-        apply(.text(message))
-        if !stack.isEmpty { stack[stack.count - 1].raw += message }
+        let hint = Settings.usesAgent
+            ? "当前由 Agent 回答（\(Settings.acpCommand)）。工作目录：\(Settings.acpWorkspacePath)。"
+            : troubleshootingHint(for: config)
+        showError("\n\n⚠️ \(error.localizedDescription)\n\(hint)")
+    }
+
+    /// SPRIG_SNAP_PANEL=/tmp/p.png 时把面板画成图片（调试排版用，不需要屏幕录制权限）
+    func dumpSnapshotIfRequested() {
+        guard let path = ProcessInfo.processInfo.environment["SPRIG_SNAP_PANEL"],
+              let view = panel.contentView,
+              let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+        NSGraphicsContext.saveGraphicsState()
+        if let context = NSGraphicsContext(bitmapImageRep: rep) {
+            NSGraphicsContext.current = context
+            NSColor.windowBackgroundColor.setFill()
+            NSRect(origin: .zero, size: view.bounds.size).fill()
+        }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        NSGraphicsContext.restoreGraphicsState()
+        try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+        print("[panel] snapshot ->", path)
+    }
+
+    /// 报错只留在面板上：写进卡片的话会被 CardStore 顺手同步进 Markdown。
+    /// 卡片本身（问题）保留，答案留空，用户可以直接重试。
+    private func showError(_ message: String) {
+        applyError(message)
+        if !stack.isEmpty {
+            stack[stack.count - 1].errorText = message
+        }
         answerHeight = measuredAnswerHeight()
         applyHeights(animated: true)
         answerView.scrollToBottom()
-        persistCurrentCard()
+        refreshTreeIfVisible()
     }
 
     /// 报错时给一句能立刻照做的排查方向，而不是只有原始 HTTP 文本
@@ -1107,10 +1474,6 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         switch config.kind {
         case .ollama:
             return "本地模型没起来时，先在终端跑一次 `ollama serve`，并确认模型名（当前：\(config.modelLabel)）已 pull 到本地。"
-        case .gemini:
-            return "当前接入：\(config.displayName) · \(config.modelLabel)。"
-                + "若提示 429，是免费额度用完了（约 10–15 次/分钟），等一会儿再试；"
-                + "若提示 400/403，多半是 API Key 无效或该模型不在免费层。"
         case .openAICompatible:
             return "检查 Base URL（当前：\(config.baseURL)）、API Key 和模型名（当前：\(config.modelLabel)）。"
         }
@@ -1171,6 +1534,10 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
     // MARK: - 卡片树导航
 
     private func renderCurrent(placeholder: Bool = false) {
+        if let node = stack.last, node.errorText == nil, let error = backgroundErrors[node.card.id] {
+            stack[stack.count - 1].errorText = error
+            backgroundErrors[node.card.id] = nil
+        }
         guard let node = stack.last else {
             answerView.reset()
             answerHeight = 0
@@ -1184,9 +1551,10 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         answerView.reset()
         seenTerms.removeAll()
 
-        var replay = TermParser()
-        for segment in replay.consume(node.raw) + replay.flush() {
-            apply(segment)
+        // 有内容的正文按 Markdown 画（标题/列表/代码块/粗斜体/术语）
+        answerView.renderRich(node.raw)
+        if let error = node.errorText {
+            applyError(error)
         }
         attachSearchLinks(for: node.card)
 
@@ -1251,7 +1619,45 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         stack[index].card.answer = stack[index].raw
         let card = stack[index].card
         Task { await CardStore.shared.upsert(card) }
+        prepareHtmlAssets(for: card)
         refreshTreeIfVisible()
+    }
+
+    /// 答案里有 ```html 图块时，把它离屏渲染成 PNG 落到 `<知识库>/assets/`，
+    /// 再重新导出一遍 Markdown——这样 `.md` 里留下的是图片而不是源码。
+    private func prepareHtmlAssets(for card: AnswerCard) {
+        let blocks = MarkdownLite.parse(card.answer).compactMap { block -> String? in
+            if case .html(let html) = block.kind { return html }
+            return nil
+        }
+        guard !blocks.isEmpty else { return }
+        let assets = Settings.cardsDirectory.appendingPathComponent("assets", isDirectory: true)
+
+        Task { @MainActor in
+            try? FileManager.default.createDirectory(at: assets, withIntermediateDirectories: true)
+            var changed = false
+            for html in blocks {
+                let url = assets.appendingPathComponent(HtmlAsset.name(for: html))
+                if FileManager.default.fileExists(atPath: url.path) { continue }
+                guard let image = await HtmlSnapshot.image(for: html),
+                      let data = Self.pngData(image) else { continue }
+                try? data.write(to: url)
+                changed = true
+            }
+            guard changed else { return }
+            // 图片有了，重新导出一遍 Markdown，并把面板重绘（HTML 块从源码变成图）
+            if var stored = await CardStore.shared.card(id: card.id) {
+                stored.answer = card.answer
+                await CardStore.shared.upsert(stored)
+            }
+            if stack.last?.card.id == card.id { renderCurrent() }
+        }
+    }
+
+    private static func pngData(_ image: NSImage) -> Data? {
+        guard let tiff = image.tiffRepresentation,
+              let rep = NSBitmapImageRep(data: tiff) else { return nil }
+        return rep.representation(using: .png, properties: [:])
     }
 
     // MARK: - 重命名 / 删除
@@ -1407,6 +1813,11 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
             return true
         }
 
+        if url.scheme == "sprig", url.host == "retry" {
+            retryTurn()
+            return true
+        }
+
         // 搜索来源这类普通链接：交给系统用默认浏览器打开
         NSWorkspace.shared.open(url)
         return true
@@ -1462,6 +1873,10 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
     }
 
     private func handleEscape() {
+        if !content.permissionBar.isHidden {
+            dismissPermission()
+            return
+        }
         if !content.selectionBar.isHidden {
             hideSelectionBar()
         } else if isTreeVisible {
@@ -1499,6 +1914,7 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
     }
 
     func debugSelfTest() {
+        defer { dumpSnapshotIfRequested() }
         show()
 
         let rootAnswer = "RAG（检索增强生成）是结合检索与生成的 AI 方法。它从外部知识库检索相关信息，再基于这些信息生成回答。它缓解了大语言模型的⟦幻觉⟧问题。"
@@ -1521,6 +1937,10 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         print("bottomScroll.frame =", content.bottomScroll.frame)
         print("answerScroll.frame =", content.answerScroll.frame)
         print("inputScroll.frame  =", content.inputScroll.frame)
+        print("thinking.frame     =", content.thinkingButton.frame,
+              "hidden:", content.thinkingButton.isHidden,
+              "title:", content.thinkingButton.title,
+              "hint:", content.thinkingButton.toolTip ?? "")
         print("modelButton.frame  =", content.modelButton.frame)
         print("modelButton.label  =", content.modelButton.label)
         print("modelMenu.items    =", makeModelMenu().items.map(\.title))

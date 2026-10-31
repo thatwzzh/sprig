@@ -21,8 +21,10 @@ enum Theme {
     static let modelButtonGap: CGFloat = 8
     /// 联网搜索开关，和树按钮同尺寸，只是位置不同（贴着输入框）
     static let searchToggleSize: CGFloat = 22
+    static let thoughtToggleSize: CGFloat = 22
     static let inputAccessoryWidth: CGFloat = treeToggleSize
         + modelButtonGap + searchToggleSize
+        + modelButtonGap + thoughtToggleSize
         + modelButtonGap + ModelPickerButton.width
         + modelButtonGap
     /// 输入框里文字可用的宽度
@@ -31,8 +33,8 @@ enum Theme {
     static let queryFont = NSFont.systemFont(ofSize: 15)
     static let composerFont = NSFont.systemFont(ofSize: 13)
     static let questionFont = NSFont.systemFont(ofSize: 12.5)
-    static let answerFont = NSFont.systemFont(ofSize: 13.5)
-    static let answerFontPointSize: CGFloat = 13.5
+    static let answerFont = NSFont.systemFont(ofSize: 14)
+    static let answerFontPointSize: CGFloat = 14
 
     /// 段落样式：流式时每个 chunk 追加都要用，做成常量避免反复分配
     /// 搜索提示行用：段前段后都不留白，行距也压到最小，
@@ -45,10 +47,11 @@ enum Theme {
         return style
     }()
 
+    /// 正文段落：行距 5、段后 10，接近 Typora 那种松弛的阅读节奏
     static let answerParagraph: NSParagraphStyle = {
         let style = NSMutableParagraphStyle()
-        style.lineSpacing = 4
-        style.paragraphSpacing = 6
+        style.lineSpacing = 5
+        style.paragraphSpacing = 10
         return style
     }()
 }

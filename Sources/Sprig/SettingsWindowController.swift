@@ -14,10 +14,8 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
     private let localURLField = NSTextField(string: "")
     private let localSyncButton = PointerButton(title: "同步模型", target: nil, action: nil)
     private let localModelsLabel = NSTextField(labelWithString: "")
-    // 免费：Gemini 和 OpenRouter 并列，各自一条 Key
+    // 免费：只留智谱一条 Key
     private let zhipuKeyField = NSSecureTextField(string: "")
-    private let geminiKeyField = NSSecureTextField(string: "")
-    private let openRouterKeyField = NSSecureTextField(string: "")
     private let freeModelsLabel = NSTextField(labelWithString: "")
     // 自定义：用户自填，可多条
     private let customPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -36,16 +34,22 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
                                            target: nil,
                                            action: nil)
     private let thinkingToggle = NSButton(checkboxWithTitle: "关闭思考链", target: nil, action: nil)
+    private let readingThemePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private let searchBackendPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private let webSearchKeyField = NSSecureTextField(string: "")
     private let proxyField = NSTextField(string: "")
     private let webSearchHelpButton = PointerButton(title: "去获取", target: nil, action: nil)
+    private let agentChips = AgentChipsView(frame: .zero)
+    private let agentWorkspaceLabel = NSTextField(labelWithString: "")
+    private let agentRescanButton = PointerButton(title: "重新检测", target: nil, action: nil)
+    private let agentTestAllButton = PointerButton(title: "测试全部", target: nil, action: nil)
+    private var agentStatuses: [UUID: AcpProbeStatus] = [:]
 
     /// 自定义下拉里每一项对应的配置 id
     private var customIDs: [UUID] = []
 
     private convenience init() {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 780),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 890),
                               styleMask: [.titled, .closable],
                               backing: .buffered,
                               defer: false)
@@ -62,221 +66,293 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
 
     // MARK: - 布局
 
+    // MARK: - 布局参数（所有间距只从这里取，保证节奏一致）
+
+    private enum Layout {
+        static let left: CGFloat = 24
+        static let right: CGFloat = 476
+        static let width = right - left
+        static let control: CGFloat = 24      // 输入框 / 下拉
+        static let button: CGFloat = 26       // 普通按钮
+        static let rowGap: CGFloat = 8        // 同一块内的行距
+        static let blockGap: CGFloat = 14     // 内容 → 分隔线 / 分隔线 → 标题
+        static let titleGap: CGFloat = 8      // 标题 → 第一个控件
+        static let groupGap: CGFloat = 18     // 子组之间
+        static let groupTitleGap: CGFloat = 6 // 子标题 → 它的那一行
+        static let buttonMin: CGFloat = 76    // 按钮最小宽度
+        static let iconButton: CGFloat = 32   // 只有图标的按钮（＋/－）
+        static let padding: CGFloat = 12      // 按钮左右内边距（单边）
+    }
+
+    /// 所有按钮都过一遍这里：字号、圆角、内边距统一，宽度 = 文字宽 + 两侧 padding，且不低于最小值。
+    @discardableResult
+    private func sizeButton(_ button: PointerButton,
+                            min minWidth: CGFloat = Layout.buttonMin,
+                            font: CGFloat = 12) -> CGFloat {
+        button.bezelStyle = .rounded
+        button.controlSize = .small
+        button.font = .systemFont(ofSize: font)
+        let text = (button.title as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: font)]).width
+        let width = max(minWidth, ceil(text) + Layout.padding * 2)
+        button.frame = NSRect(x: button.frame.origin.x, y: button.frame.origin.y,
+                              width: width, height: Layout.button)
+        return width
+    }
+
     private func buildContent() {
         guard let contentView = window?.contentView else { return }
 
-        // 快捷键
-        addRowLabel("唤起面板快捷键", y: 740, to: contentView)
+        // 从上往下一路排下来：y 记录当前块的下沿
+        var y: CGFloat = 866
+
+        // ── 快捷键 ──
+        y -= Layout.button
+        addRowLabel("唤起面板快捷键", y: y + 4, to: contentView)
         let panelRecorder = KeyboardShortcuts.RecorderCocoa(for: .togglePanel)
-        panelRecorder.frame = NSRect(x: 120, y: 734, width: 356, height: 26)
+        panelRecorder.frame = NSRect(x: 120, y: y, width: Layout.right - 120, height: Layout.button)
         contentView.addSubview(panelRecorder)
 
-        addRowLabel("知识树快捷键", y: 706, to: contentView)
+        y -= Layout.rowGap + Layout.button
+        addRowLabel("知识树快捷键", y: y + 4, to: contentView)
         let treeRecorder = KeyboardShortcuts.RecorderCocoa(for: .toggleTree)
-        treeRecorder.frame = NSRect(x: 120, y: 700, width: 356, height: 26)
+        treeRecorder.frame = NSRect(x: 120, y: y, width: Layout.right - 120, height: Layout.button)
         contentView.addSubview(treeRecorder)
 
-        addSeparator(y: 680, to: contentView)
+        // ── 阅读主题 ──
+        y -= Layout.blockGap
+        addSeparator(y: y, to: contentView)
+        y -= Layout.blockGap + 18
+        addSectionTitle("阅读主题", y: y, to: contentView)
 
-        addSectionTitle("模型接入", y: 654, to: contentView)
+        y -= Layout.titleGap + Layout.control
+        readingThemePopUp.frame = NSRect(x: Layout.left, y: y, width: 200, height: Layout.control)
+        readingThemePopUp.controlSize = .small
+        readingThemePopUp.font = .systemFont(ofSize: 12)
+        readingThemePopUp.target = self
+        readingThemePopUp.action = #selector(readingThemeChanged)
+        contentView.addSubview(readingThemePopUp)
+        reloadReadingThemePopUp()
 
-        // ── 本地：只填地址，模型靠同步，和免费类一个模式 ──
-        addGroupTitle("本地 · Ollama 跑在本机，模型靠同步拉取", y: 628, to: contentView)
+        let themeHint = NSTextField(labelWithString: "只影响答案区的排版和配色，已有卡片会跟着变")
+        themeHint.font = .systemFont(ofSize: 11)
+        themeHint.textColor = .secondaryLabelColor
+        themeHint.frame = NSRect(x: 236, y: y + 4, width: Layout.right - 236, height: 16)
+        contentView.addSubview(themeHint)
+
+        // ── 模型接入 ──
+        y -= Layout.blockGap
+        addSeparator(y: y, to: contentView)
+        y -= Layout.blockGap + 18
+        addSectionTitle("模型接入", y: y, to: contentView)
+
+        // 本地
+        y -= Layout.titleGap + 16
+        addGroupTitle("本地 · Ollama 跑在本机，模型靠同步拉取", y: y, to: contentView)
+        y -= Layout.groupTitleGap + Layout.button
         configure(localURLField, placeholder: "Ollama 地址")
-        localURLField.frame = NSRect(x: 24, y: 598, width: 240, height: 24)
+        localURLField.frame = NSRect(x: Layout.left, y: y + 1, width: 190, height: Layout.control)
         contentView.addSubview(localURLField)
 
         localSyncButton.target = self
         localSyncButton.action = #selector(syncLocalModels)
-        localSyncButton.bezelStyle = .rounded
-        localSyncButton.controlSize = .small
-        localSyncButton.font = .systemFont(ofSize: 12)
-        localSyncButton.frame = NSRect(x: 270, y: 597, width: 104, height: 26)
         localSyncButton.toolTip = "列出本机 Ollama 已 pull 的模型"
+        let localSyncWidth = sizeButton(localSyncButton)
+        localSyncButton.frame.origin = NSPoint(x: 218, y: y)
         contentView.addSubview(localSyncButton)
 
         localModelsLabel.font = .systemFont(ofSize: 11)
         localModelsLabel.textColor = .secondaryLabelColor
         localModelsLabel.lineBreakMode = .byTruncatingTail
-        localModelsLabel.frame = NSRect(x: 380, y: 603, width: 96, height: 16)
+        localModelsLabel.frame = NSRect(x: 218 + localSyncWidth + Layout.rowGap, y: y + 5,
+                                        width: Layout.right - 218 - localSyncWidth - Layout.rowGap,
+                                        height: 16)
         contentView.addSubview(localModelsLabel)
 
-        // ── 免费：两条并列，各自一个 Key ──
-        addGroupTitle("免费 · 模型清单从接口拉，面板里可逐个切换", y: 570, to: contentView)
-
-        // 顺序按「越可能长期免费越靠前」：智谱不限量，OpenRouter 靠上游池，Gemini 要代理
+        // 免费
+        y -= Layout.groupGap + 16
+        addGroupTitle("免费 · 智谱 GLM，模型名固定为免费型号", y: y, to: contentView)
+        y -= Layout.groupTitleGap + Layout.button
         let zhipuLabel = NSTextField(labelWithString: "智谱 GLM")
         zhipuLabel.font = .systemFont(ofSize: 12)
         zhipuLabel.textColor = .secondaryLabelColor
-        zhipuLabel.frame = NSRect(x: 24, y: 544, width: 72, height: 18)
+        zhipuLabel.frame = NSRect(x: Layout.left, y: y + 4, width: 64, height: 18)
         contentView.addSubview(zhipuLabel)
 
         zhipuKeyField.placeholderString = "智谱 API Key（免费，推荐）"
         zhipuKeyField.font = .systemFont(ofSize: 12)
         zhipuKeyField.delegate = self
-        zhipuKeyField.frame = NSRect(x: 100, y: 540, width: 300, height: 24)
+        zhipuKeyField.frame = NSRect(x: 92, y: y + 1, width: 140, height: Layout.control)
         contentView.addSubview(zhipuKeyField)
 
         let zhipuHelp = PointerButton(title: "去获取", target: self, action: #selector(openZhipuKeyPage))
-        zhipuHelp.bezelStyle = .rounded
-        zhipuHelp.controlSize = .small
-        zhipuHelp.font = .systemFont(ofSize: 12)
-        zhipuHelp.frame = NSRect(x: 406, y: 539, width: 70, height: 26)
         zhipuHelp.toolTip = "bigmodel.cn 注册 + 实名认证后创建 Key；GLM-4.7-Flash 免费不限量，不用买套餐"
+        let helpWidth = sizeButton(zhipuHelp)
+        zhipuHelp.frame.origin = NSPoint(x: 236, y: y)
         contentView.addSubview(zhipuHelp)
-
-        let orLabel = NSTextField(labelWithString: "OpenRouter")
-        orLabel.font = .systemFont(ofSize: 12)
-        orLabel.textColor = .secondaryLabelColor
-        orLabel.frame = NSRect(x: 24, y: 516, width: 72, height: 18)
-        contentView.addSubview(orLabel)
-
-        openRouterKeyField.placeholderString = "OpenRouter API Key（sk-or-v1-…）"
-        openRouterKeyField.font = .systemFont(ofSize: 12)
-        openRouterKeyField.delegate = self
-        openRouterKeyField.frame = NSRect(x: 100, y: 512, width: 300, height: 24)
-        contentView.addSubview(openRouterKeyField)
-
-        let orHelp = PointerButton(title: "去获取", target: self, action: #selector(openOpenRouterKeyPage))
-        orHelp.bezelStyle = .rounded
-        orHelp.controlSize = .small
-        orHelp.font = .systemFont(ofSize: 12)
-        orHelp.frame = NSRect(x: 406, y: 511, width: 70, height: 26)
-        orHelp.toolTip = "在 openrouter.ai/keys 领 Key"
-        contentView.addSubview(orHelp)
-
-        let geminiLabel = NSTextField(labelWithString: "Gemini")
-        geminiLabel.font = .systemFont(ofSize: 12)
-        geminiLabel.textColor = .secondaryLabelColor
-        geminiLabel.frame = NSRect(x: 24, y: 488, width: 72, height: 18)
-        contentView.addSubview(geminiLabel)
-
-        geminiKeyField.placeholderString = "Gemini API Key（需代理）"
-        geminiKeyField.font = .systemFont(ofSize: 12)
-        geminiKeyField.delegate = self
-        geminiKeyField.frame = NSRect(x: 100, y: 484, width: 300, height: 24)
-        contentView.addSubview(geminiKeyField)
-
-        let geminiHelp = PointerButton(title: "去获取", target: self, action: #selector(openGeminiKeyPage))
-        geminiHelp.bezelStyle = .rounded
-        geminiHelp.controlSize = .small
-        geminiHelp.font = .systemFont(ofSize: 12)
-        geminiHelp.frame = NSRect(x: 406, y: 483, width: 70, height: 26)
-        geminiHelp.toolTip = "在 aistudio.google.com/apikey 领一个免费 Key"
-        contentView.addSubview(geminiHelp)
 
         syncFreeButton.target = self
         syncFreeButton.action = #selector(syncFreeModels)
-        syncFreeButton.bezelStyle = .rounded
-        syncFreeButton.controlSize = .small
-        syncFreeButton.font = .systemFont(ofSize: 12)
-        syncFreeButton.frame = NSRect(x: 24, y: 456, width: 104, height: 26)
-        syncFreeButton.toolTip = "从各家接口拉取免费模型，只保留探测通过的"
+        syncFreeButton.toolTip = "确认智谱这条免费型号还在"
+        let freeSyncWidth = sizeButton(syncFreeButton)
+        syncFreeButton.frame.origin = NSPoint(x: 236 + helpWidth + Layout.rowGap, y: y)
         contentView.addSubview(syncFreeButton)
 
         freeModelsLabel.font = .systemFont(ofSize: 11)
         freeModelsLabel.textColor = .secondaryLabelColor
         freeModelsLabel.lineBreakMode = .byTruncatingTail
-        freeModelsLabel.frame = NSRect(x: 136, y: 461, width: 340, height: 16)
+        freeModelsLabel.frame = NSRect(x: 236 + helpWidth + freeSyncWidth + Layout.rowGap * 2,
+                                       y: y + 5, width: 60, height: 16)
         contentView.addSubview(freeModelsLabel)
 
-        // ── 自定义 ──
-        addGroupTitle("自定义 · 填 Base URL 和 Key，给配置起个名", y: 430, to: contentView)
-        customPopUp.frame = NSRect(x: 24, y: 400, width: 296, height: 26)
+        // 自定义
+        y -= Layout.groupGap + 16
+        addGroupTitle("自定义 · 填 Base URL 和 Key，给配置起个名", y: y, to: contentView)
+        y -= Layout.groupTitleGap + Layout.button
+        let iconTotal = Layout.iconButton * 2 + Layout.rowGap * 2
+        customPopUp.frame = NSRect(x: Layout.left, y: y, width: Layout.width - iconTotal, height: Layout.button)
         customPopUp.target = self
         customPopUp.action = #selector(customSelectionChanged)
         contentView.addSubview(customPopUp)
 
         addButton.target = self
         addButton.action = #selector(addCustomProvider)
-        addButton.bezelStyle = .rounded
-        addButton.controlSize = .small
-        addButton.font = .systemFont(ofSize: 13)
-        addButton.frame = NSRect(x: 326, y: 400, width: 32, height: 26)
         addButton.toolTip = "新增一个自定义接入"
+        sizeButton(addButton, min: Layout.iconButton, font: 13)
+        addButton.frame.origin = NSPoint(x: Layout.right - iconTotal + Layout.rowGap, y: y)
         contentView.addSubview(addButton)
 
         removeButton.target = self
         removeButton.action = #selector(removeProvider)
-        removeButton.bezelStyle = .rounded
-        removeButton.controlSize = .small
-        removeButton.font = .systemFont(ofSize: 13)
-        removeButton.frame = NSRect(x: 362, y: 400, width: 32, height: 26)
         removeButton.toolTip = "删除当前自定义接入"
+        sizeButton(removeButton, min: Layout.iconButton, font: 13)
+        removeButton.frame.origin = NSPoint(x: Layout.right - Layout.iconButton, y: y)
         contentView.addSubview(removeButton)
 
+        y -= Layout.rowGap + Layout.control
         configure(customNameField, placeholder: "名称，例如「公司网关」")
-        customNameField.frame = NSRect(x: 24, y: 370, width: 76, height: 24)
+        customNameField.frame = NSRect(x: Layout.left, y: y, width: 76, height: Layout.control)
         contentView.addSubview(customNameField)
 
         configure(customURLField, placeholder: "Base URL，填到 /v1 或只填域名")
-        customURLField.frame = NSRect(x: 106, y: 370, width: 156, height: 24)
+        customURLField.frame = NSRect(x: 104, y: y, width: 156, height: Layout.control)
         contentView.addSubview(customURLField)
 
         customKeyField.placeholderString = "API Key"
         customKeyField.font = .systemFont(ofSize: 12)
         customKeyField.delegate = self
-        customKeyField.frame = NSRect(x: 268, y: 370, width: 90, height: 24)
+        customKeyField.frame = NSRect(x: 264, y: y, width: 90, height: Layout.control)
         contentView.addSubview(customKeyField)
 
         configure(customModelField, placeholder: "模型名")
-        customModelField.frame = NSRect(x: 364, y: 370, width: 112, height: 24)
+        customModelField.frame = NSRect(x: 358, y: y, width: Layout.right - 358, height: Layout.control)
         contentView.addSubview(customModelField)
 
+        y -= Layout.rowGap + Layout.button
         testButton.target = self
         testButton.action = #selector(testConnection)
-        testButton.bezelStyle = .rounded
-        testButton.controlSize = .small
-        testButton.font = .systemFont(ofSize: 12)
-        testButton.frame = NSRect(x: 24, y: 338, width: 104, height: 26)
+        let testWidth = sizeButton(testButton)
+        testButton.frame.origin = NSPoint(x: Layout.left, y: y)
         contentView.addSubview(testButton)
 
         statusLabel.font = .systemFont(ofSize: 11)
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.lineBreakMode = .byTruncatingTail
-        statusLabel.frame = NSRect(x: 136, y: 343, width: 340, height: 16)
+        statusLabel.frame = NSRect(x: Layout.left + testWidth + Layout.rowGap, y: y + 5,
+                                   width: Layout.right - Layout.left - testWidth - Layout.rowGap,
+                                   height: 16)
         contentView.addSubview(statusLabel)
 
-        addSeparator(y: 310, to: contentView)
+        // ── Agent ──
+        y -= Layout.blockGap
+        addSeparator(y: y, to: contentView)
+        y -= Layout.blockGap + 18
+        addSectionTitle("Agent", y: y, to: contentView)
 
-        // 知识库
-        addSectionTitle("知识库", y: 286, to: contentView)
+        let rescanWidth = sizeButton(agentRescanButton)
+        agentRescanButton.target = self
+        agentRescanButton.action = #selector(rescanAgents)
+        agentRescanButton.toolTip = "重新扫本机已装的 agent；卸载过的会从忽略名单里放出来"
+        agentRescanButton.frame.origin = NSPoint(x: Layout.right - rescanWidth * 2 - Layout.rowGap,
+                                                 y: y)
+        contentView.addSubview(agentRescanButton)
+
+        let testAllWidth = sizeButton(agentTestAllButton)
+        agentTestAllButton.target = self
+        agentTestAllButton.action = #selector(testAllAgents)
+        agentTestAllButton.toolTip = "逐条握手：✓ 成功 / ! 未登录 / ✕ 失败 / ◌ 测试中"
+        agentTestAllButton.frame.origin = NSPoint(x: Layout.right - testAllWidth, y: y)
+        contentView.addSubview(agentTestAllButton)
+
+        y -= Layout.groupTitleGap + 16
+        let agentHint = NSTextField(labelWithString: "单击标签可设置默认模型、修改命令")
+        agentHint.font = .systemFont(ofSize: 11)
+        agentHint.textColor = .secondaryLabelColor
+        agentHint.frame = NSRect(x: Layout.left, y: y, width: 300, height: 16)
+        contentView.addSubview(agentHint)
+
+        y -= Layout.groupTitleGap + 54
+        agentChips.frame = NSRect(x: Layout.left, y: y, width: Layout.width, height: 54)
+        agentChips.onAdd = { [weak self] in self?.addAgent() }
+        agentChips.onEdit = { [weak self] id in self?.editAgent(id: id) }
+        contentView.addSubview(agentChips)
+
+        y -= Layout.groupTitleGap + Layout.button
+        // 工作目录只展示、不手填：路径靠「选择…」改，避免手打错路径
+        agentWorkspaceLabel.font = .systemFont(ofSize: 12)
+        agentWorkspaceLabel.textColor = .secondaryLabelColor
+        agentWorkspaceLabel.lineBreakMode = .byTruncatingMiddle
+        agentWorkspaceLabel.frame = NSRect(x: Layout.left, y: y + 4, width: 372, height: 18)
+        contentView.addSubview(agentWorkspaceLabel)
+
+        let agentChoose = PointerButton(title: "选择…", target: self, action: #selector(chooseAgentWorkspace))
+        sizeButton(agentChoose)
+        agentChoose.frame.origin = NSPoint(x: Layout.right - agentChoose.frame.width, y: y)
+        contentView.addSubview(agentChoose)
+
+        // ── 知识库 ──
+        y -= Layout.blockGap
+        addSeparator(y: y, to: contentView)
+        y -= Layout.blockGap + 18
+        addSectionTitle("知识库", y: y, to: contentView)
+
+        y -= Layout.titleGap + Layout.button
         pathLabel.font = .systemFont(ofSize: 12)
         pathLabel.textColor = .secondaryLabelColor
         pathLabel.lineBreakMode = .byTruncatingMiddle
-        pathLabel.frame = NSRect(x: 24, y: 260, width: 330, height: 18)
-        pathLabel.toolTip = "卡片存放在这个目录的 \(CardStore.fileName) 里，换目录时会把现有卡片复制过去"
+        pathLabel.frame = NSRect(x: Layout.left, y: y + 4, width: 368, height: 18)
+        pathLabel.lineBreakMode = .byTruncatingMiddle
         contentView.addSubview(pathLabel)
 
         let chooseButton = PointerButton(title: "选择…", target: self, action: #selector(chooseFolder))
-        chooseButton.bezelStyle = .rounded
-        chooseButton.controlSize = .small
-        chooseButton.font = .systemFont(ofSize: 12)
-        chooseButton.frame = NSRect(x: 396, y: 255, width: 80, height: 26)
         chooseButton.toolTip = "选择知识库文件夹"
+        sizeButton(chooseButton)
+        chooseButton.frame.origin = NSPoint(x: Layout.right - chooseButton.frame.width, y: y)
         contentView.addSubview(chooseButton)
 
-        addSeparator(y: 236, to: contentView)
+        // ── 联网搜索 ──
+        y -= Layout.blockGap
+        addSeparator(y: y, to: contentView)
+        y -= Layout.blockGap + 18
+        addSectionTitle("联网搜索", y: y, to: contentView)
 
-        // 联网搜索
-        addSectionTitle("联网搜索", y: 212, to: contentView)
-
+        y -= Layout.titleGap + 20
         webSearchToggle.target = self
         webSearchToggle.action = #selector(webSearchToggled)
         webSearchToggle.font = .systemFont(ofSize: 12)
-        webSearchToggle.frame = NSRect(x: 22, y: 184, width: 200, height: 20)
+        webSearchToggle.frame = NSRect(x: 22, y: y, width: 200, height: 20)
         webSearchToggle.state = Settings.webSearchEnabled ? .on : .off
         contentView.addSubview(webSearchToggle)
 
         thinkingToggle.target = self
         thinkingToggle.action = #selector(thinkingToggled)
         thinkingToggle.font = .systemFont(ofSize: 12)
-        thinkingToggle.frame = NSRect(x: 236, y: 184, width: 120, height: 20)
+        thinkingToggle.frame = NSRect(x: 236, y: y, width: 200, height: 20)
         thinkingToggle.state = Settings.disableThinking ? .on : .off
         thinkingToggle.toolTip = "推理模型会先输出思考过程。知识问答用不上，关掉更快、更省 token。"
         contentView.addSubview(thinkingToggle)
 
-        searchBackendPopUp.frame = NSRect(x: 24, y: 156, width: 110, height: 24)
+        y -= Layout.rowGap + Layout.button
+        searchBackendPopUp.frame = NSRect(x: Layout.left, y: y + 1, width: 110, height: Layout.control)
         searchBackendPopUp.controlSize = .small
         searchBackendPopUp.font = .systemFont(ofSize: 12)
         searchBackendPopUp.target = self
@@ -288,22 +364,23 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         webSearchKeyField.font = .systemFont(ofSize: 12)
         webSearchKeyField.delegate = self
         webSearchKeyField.stringValue = Settings.webSearchAPIKey
-        webSearchKeyField.frame = NSRect(x: 140, y: 156, width: 260, height: 24)
         contentView.addSubview(webSearchKeyField)
 
         webSearchHelpButton.target = self
         webSearchHelpButton.action = #selector(openSearchKeyPage)
-        webSearchHelpButton.bezelStyle = .rounded
-        webSearchHelpButton.controlSize = .small
-        webSearchHelpButton.font = .systemFont(ofSize: 12)
-        webSearchHelpButton.frame = NSRect(x: 406, y: 155, width: 70, height: 26)
         webSearchHelpButton.toolTip = searchHelpTooltip()
+        let searchHelpWidth = sizeButton(webSearchHelpButton)
+        webSearchHelpButton.frame.origin = NSPoint(x: Layout.right - searchHelpWidth, y: y)
         contentView.addSubview(webSearchHelpButton)
+        webSearchKeyField.frame = NSRect(x: 138, y: y + 1,
+                                         width: Layout.right - 138 - searchHelpWidth - Layout.rowGap,
+                                         height: Layout.control)
 
+        y -= Layout.rowGap + Layout.control
         let proxyLabel = NSTextField(labelWithString: "代理")
         proxyLabel.font = .systemFont(ofSize: 12)
         proxyLabel.textColor = .secondaryLabelColor
-        proxyLabel.frame = NSRect(x: 24, y: 128, width: 40, height: 18)
+        proxyLabel.frame = NSRect(x: Layout.left, y: y + 3, width: 40, height: 18)
         contentView.addSubview(proxyLabel)
 
         proxyField.placeholderString = "http://127.0.0.1:7890（留空则跟随系统）"
@@ -311,18 +388,20 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         proxyField.delegate = self
         proxyField.stringValue = Settings.customProxy
         proxyField.toolTip = "所有模型和搜索请求都走这个代理；改了立刻生效"
-        proxyField.frame = NSRect(x: 68, y: 124, width: 332, height: 24)
+        proxyField.frame = NSRect(x: 68, y: y, width: Layout.right - 68, height: Layout.control)
         contentView.addSubview(proxyField)
 
+
+
+        y -= Layout.rowGap + 104
         let hint = NSTextField(wrappingLabelWithString:
-            "API Key 只写入本机偏好设置，不会上传；需要 Key 的接入右侧都有「去获取」。\n"
-            + "「OpenAI 兼容」适用于 OpenAI / DeepSeek / Groq / 智谱 / 火山 / 百炼 等，"
-            + "Base URL 填到 /v1 或只填域名都行。\n"
-            + "免费模型从接口拉取、每天自动更新，面板右侧可逐个切换。\n"
-            + "联网搜索可切 Tavily（1000 次/月免费）或 DeepSeek（5 元/1000 次，中文更强）。")
+            "API Key 只写入本机偏好设置，不会上传；联网搜索可切 Tavily（1000 次/月免费）或 DeepSeek（5 元/1000 次，中文更强）。")
         hint.font = .systemFont(ofSize: 11)
         hint.textColor = .secondaryLabelColor
-        hint.frame = NSRect(x: 24, y: 12, width: 452, height: 104)
+        hint.frame = NSRect(x: Layout.left, y: max(y + 84, 10), width: Layout.width, height: 34)
+        if ProcessInfo.processInfo.environment["SPRIG_LAYOUT_TRACE"] != nil {
+            FileHandle.standardError.write(Data("hint y=\(Int(hint.frame.minY))\n".utf8))
+        }
         contentView.addSubview(hint)
 
         reloadAll()
@@ -370,7 +449,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         Settings.providerConfigs.first { $0.resolvedCategory == .local }
     }
 
-    /// 免费组按「越可能长期免费越靠前」排：智谱 → OpenRouter → Gemini
+    /// 免费组排序：目前只有智谱，留着顺序位以便以后加
     private var freeConfigs: [ProviderConfig] {
         Settings.providerConfigs
             .filter { $0.resolvedCategory == .free }
@@ -396,7 +475,193 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         loadFreeFields()
         loadCustomFields()
         refreshPath()
+        Settings.syncDetectedAgents()
+        reloadAgentChips()
+        let agentMode = Settings.usesAgent
+        webSearchToggle.isEnabled = !agentMode
+        webSearchToggle.toolTip = agentMode
+            ? "当前由 agent 回答，联不联网由它自己决定，这个开关不生效"
+            : ""
         statusLabel.stringValue = ""
+    }
+
+    // MARK: Agent
+
+    private func reloadAgentChips() {
+        agentChips.reload(Settings.agentConfigs,
+                          active: Settings.activeAgentID,
+                          statuses: agentStatuses)
+        let workspacePath = Settings.acpWorkspacePath
+        agentWorkspaceLabel.stringValue = (workspacePath as NSString).abbreviatingWithTildeInPath
+        agentWorkspaceLabel.toolTip = """
+        agent 进程的当前目录：它读写文件、跑命令的相对路径都落在这里。
+        纯问答不会产生文件，所以空着是正常的；想让它读某个项目，就点「选择…」指向那个项目目录。
+        所有 agent 共用一个。
+        \(workspacePath)
+        """
+        if Settings.usesAgent, !Settings.acpReady {
+            Settings.usesAgent = false
+        }
+    }
+
+    private enum AgentSheetResult {
+        case saved(AgentConfig)
+        case deleted
+        case cancelled
+    }
+
+    @objc private func addAgent() {
+        let blank = AgentConfig(name: "", command: "")
+        guard case .saved(let config) = presentAgentSheet(title: "添加 Agent",
+                                                          config: blank,
+                                                          allowsDelete: false) else { return }
+        Settings.upsertAgent(config)
+        Settings.activeAgentID = config.id
+        reloadAgentChips()
+    }
+
+    private func editAgent(id: UUID) {
+        guard let existing = Settings.agentConfigs.first(where: { $0.id == id }) else { return }
+        switch presentAgentSheet(title: existing.presetID == nil ? "编辑 Agent" : "Agent 设置",
+                                 config: existing,
+                                 allowsDelete: existing.presetID == nil) {
+        case .saved(let edited):
+            Settings.upsertAgent(edited)
+        case .deleted:
+            Settings.removeAgent(id: id)
+            agentStatuses[id] = nil
+        case .cancelled:
+            return
+        }
+        reloadAgentChips()
+    }
+
+    @objc private func rescanAgents() {
+        Settings.syncDetectedAgents()
+        // 重新检测等于「重来一遍」，旧的测试结果不再可信
+        agentStatuses.removeAll()
+        reloadAgentChips()
+    }
+
+    @objc private func chooseAgentWorkspace() {
+        guard let window else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "用作工作目录"
+        panel.directoryURL = URL(fileURLWithPath: Settings.acpWorkspacePath, isDirectory: true)
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            Settings.agentWorkspace = url.path
+            self?.reloadAgentChips()
+        }
+    }
+
+    /// 逐条握手。一次只跑一个，跑完就收进程 —— 多个 agent 进程同时挂着没必要。
+    @objc private func testAllAgents() {
+        let configs = Settings.agentConfigs
+        guard !configs.isEmpty else { return }
+        agentTestAllButton.isEnabled = false
+        let path = AcpEnvironment.searchPath()
+        Task { @MainActor in
+            defer { self.agentTestAllButton.isEnabled = true }
+            for config in configs {
+                self.agentStatuses[config.id] = nil
+                self.agentChips.setStatus(.running, for: config.id)
+                let status = await AcpClient.shared.probeStatus(commandLine: config.command,
+                                                                cwd: Settings.acpWorkspacePath,
+                                                                path: path)
+                await AcpClient.shared.shutdown()
+                self.agentStatuses[config.id] = status
+                self.agentChips.setStatus(status, for: config.id)
+            }
+        }
+    }
+
+    /// 一条 agent 的表单：名称 / 启动命令 / 工作目录。确定返回配置，取消返回 nil。
+    private func presentAgentSheet(title: String,
+                                   config: AgentConfig,
+                                   allowsDelete: Bool) -> AgentSheetResult {
+        guard let window else { return .cancelled }
+        let width: CGFloat = 420
+        let accessory = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 104))
+
+        let nameField = NSTextField(string: config.name)
+        let commandField = NSTextField(string: config.command)
+        nameField.placeholderString = "显示名，例如 WorkBuddy"
+        commandField.placeholderString = "启动命令，例如 agent acp"
+        // 本机检测出来的条目只是「装了什么」的反映，名字和命令不允许改
+        let isDetected = config.presetID != nil
+        if isDetected {
+            for field in [nameField, commandField] {
+                field.isEditable = false
+                field.isSelectable = true
+                field.textColor = .secondaryLabelColor
+            }
+        }
+
+        // 工作目录是所有 agent 共用的，配置在列表下面，不放进这个弹窗
+        let rows: [(String, NSTextField, CGFloat)] = [
+            ("名称", nameField, 72), ("命令", commandField, 40),
+        ]
+        for (label, field, y) in rows {
+            let caption = NSTextField(labelWithString: label)
+            caption.font = .systemFont(ofSize: 12)
+            caption.textColor = .secondaryLabelColor
+            caption.frame = NSRect(x: 0, y: y + 4, width: 60, height: 18)
+            accessory.addSubview(caption)
+            field.frame = NSRect(x: 64, y: y, width: width - 64, height: 24)
+            field.font = .systemFont(ofSize: 12)
+            accessory.addSubview(field)
+        }
+
+        // 模型行：默认跟随 agent，也可以从它自己的清单里固定一个
+        let modelCaption = NSTextField(labelWithString: "模型")
+        modelCaption.font = .systemFont(ofSize: 12)
+        modelCaption.textColor = .secondaryLabelColor
+        modelCaption.frame = NSRect(x: 0, y: 12, width: 60, height: 18)
+        accessory.addSubview(modelCaption)
+
+        let picker = AgentModelPicker(agentID: config.id, selectedID: config.modelID)
+        picker.commandProvider = { commandField.stringValue }
+        picker.popUp.frame = NSRect(x: 64, y: 8, width: width - 64 - 76, height: 24)
+        accessory.addSubview(picker.popUp)
+        picker.reloadButton.frame = NSRect(x: width - 68, y: 8, width: 68, height: 24)
+        accessory.addSubview(picker.reloadButton)
+
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = isDetected
+            ? "这条是从本机检测到的，名称和命令不可改；可以给它固定一个默认模型。"
+            : "命令会原样交给系统执行，知枝只负责提问和展示回答。"
+        alert.accessoryView = accessory
+        alert.addButton(withTitle: "保存")
+        if allowsDelete {
+            alert.addButton(withTitle: "删除")
+            alert.addButton(withTitle: "取消")
+        } else {
+            alert.addButton(withTitle: "取消")
+        }
+        defer { picker.stop() }
+        let response = alert.runModal()
+        if allowsDelete, response == .alertSecondButtonReturn { return .deleted }
+        guard response == .alertFirstButtonReturn else { return .cancelled }
+
+        var updated = config
+        if !isDetected {
+            updated.name = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            updated.command = commandField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !updated.command.isEmpty else { return .cancelled }
+            if updated.name.isEmpty {
+                updated.name = AcpCodec.programName(commandLine: updated.command)
+            }
+        }
+        updated.modelID = picker.selectedID
+        updated.modelLabel = picker.selectedLabel
+        updated.modelMaxInput = picker.selectedMaxInput
+        return .saved(updated)
     }
 
     // MARK: 本地
@@ -406,7 +671,6 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         localURLField.stringValue = config.baseURL
         let count = config.cachedModels?.count ?? 0
         localModelsLabel.stringValue = count > 0 ? "\(count) 个模型" : "点同步拉取"
-        localModelsLabel.toolTip = "当前使用：\(Settings.activeConfig.modelLabel)"
     }
 
     private func persistLocal() {
@@ -419,67 +683,24 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
 
     // MARK: 免费
 
-    private var geminiConfig: ProviderConfig? {
-        Settings.providerConfigs.first { $0.kind == .gemini }
-    }
-
-    private var openRouterConfig: ProviderConfig? {
-        Settings.providerConfigs.first {
-            $0.kind == .openAICompatible && $0.baseURL.lowercased().contains("openrouter")
-        }
-    }
-
     private func loadFreeFields() {
         zhipuKeyField.stringValue = zhipuConfig?.apiKey ?? ""
-        geminiKeyField.stringValue = geminiConfig?.apiKey ?? ""
-        openRouterKeyField.stringValue = openRouterConfig?.apiKey ?? ""
-
-        var parts: [String] = []
-        if let count = zhipuConfig?.cachedModels?.count, count > 0 { parts.append("智谱 \(count)") }
-        if let count = openRouterConfig?.cachedModels?.count, count > 0 { parts.append("OpenRouter \(count)") }
-        if let count = geminiConfig?.cachedModels?.count, count > 0 { parts.append("Gemini \(count)") }
-        freeModelsLabel.stringValue = parts.isEmpty ? "点「同步模型」拉取" : parts.joined(separator: " · ")
-        freeModelsLabel.toolTip = "当前使用：\(Settings.activeConfig.modelLabel)"
+        let count = zhipuConfig?.cachedModels?.count ?? 0
+        freeModelsLabel.stringValue = count > 0 ? "智谱 \(count) 个" : "点「同步模型」确认"
     }
 
     private func persistFree() {
         var configs = Settings.providerConfigs
-        var changed = false
-        if let index = configs.firstIndex(where: { $0.kind == .gemini }) {
-            configs[index].apiKey = geminiKeyField.stringValue
-            configs[index].category = .free
-            changed = true
-        }
-        if let index = configs.firstIndex(where: {
-            $0.kind == .openAICompatible && $0.baseURL.lowercased().contains("openrouter")
-        }) {
-            configs[index].apiKey = openRouterKeyField.stringValue
-            configs[index].category = .free
-            changed = true
-        }
-        if let index = configs.firstIndex(where: { $0.baseURL.lowercased().contains("bigmodel") }) {
-            configs[index].apiKey = zhipuKeyField.stringValue
-            configs[index].category = .free
-            changed = true
-        }
-        guard changed else { return }
+        guard let index = configs.firstIndex(where: { $0.baseURL.lowercased().contains("bigmodel") }) else { return }
+        configs[index].apiKey = zhipuKeyField.stringValue
+        configs[index].category = .free
         Settings.providerConfigs = configs
-    }
-
-    @objc private func openGeminiKeyPage() {
-        guard let url = URL(string: "https://aistudio.google.com/apikey") else { return }
-        NSWorkspace.shared.open(url)
     }
 
     @objc private func openZhipuKeyPage() {
         // 官方文档（docs.bigmodel.cn/cn/guide/develop）给的是这个路径，
         // 旧的 open.bigmodel.cn/usercenter/apikeys 在 SPA 路由里会 404
         guard let url = URL(string: "https://bigmodel.cn/usercenter/proj-mgmt/apikeys") else { return }
-        NSWorkspace.shared.open(url)
-    }
-
-    @objc private func openOpenRouterKeyPage() {
-        guard let url = URL(string: "https://openrouter.ai/keys") else { return }
         NSWorkspace.shared.open(url)
     }
 
@@ -592,7 +813,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         }
     }
 
-    /// 免费按钮：只刷 Gemini / OpenRouter，不碰本地
+    /// 免费按钮：只刷免费组，不碰本地
     @objc private func syncFreeModels() {
         persistFree()
         syncFreeButton.isEnabled = false
@@ -645,7 +866,11 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
     private func refreshPath() {
         let url = Settings.cardsDirectory
         pathLabel.stringValue = (url.path as NSString).abbreviatingWithTildeInPath
-        pathLabel.toolTip = url.path
+        pathLabel.toolTip = """
+        这是知识库所在的目录：卡片全部存在这里的隐藏文件里，每棵知识树另外导出一份 Markdown 方便阅读和搜索。
+        换目录时会把现有卡片一起复制过去，原来的地方不受影响。
+        \(url.path)
+        """
     }
 
     @objc private func chooseFolder() {
@@ -677,7 +902,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
             Settings.webSearchAPIKey = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         case localURLField:
             persistLocal()
-        case zhipuKeyField, geminiKeyField, openRouterKeyField:
+        case zhipuKeyField:
             persistFree()
         case proxyField:
             Settings.customProxy = field.stringValue
@@ -686,6 +911,24 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         default:
             break
         }
+    }
+
+    private func reloadReadingThemePopUp() {
+        readingThemePopUp.removeAllItems()
+        for theme in MarkdownTheme.all {
+            readingThemePopUp.addItem(withTitle: theme.name)
+            readingThemePopUp.lastItem?.representedObject = theme.id
+        }
+        if let index = MarkdownTheme.all.firstIndex(where: { $0.id == Settings.readingTheme }) {
+            readingThemePopUp.selectItem(at: index)
+        }
+    }
+
+    @objc private func readingThemeChanged() {
+        let id = readingThemePopUp.selectedItem?.representedObject as? String ?? MarkdownTheme.default.id
+        Settings.readingTheme = id
+        // 让面板立刻按新主题重排
+        NotificationCenter.default.post(name: .sprigProvidersDidChange, object: nil)
     }
 
     @objc private func webSearchToggled() {
@@ -750,11 +993,27 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
 
     /// 无界面校验：`Sprig --settings --dump` 打印表单状态后退出
     func debugDump() {
+        // 先把布局跑一遍，不然量到的都是还没排过的 frame
+        window?.contentView?.layoutSubtreeIfNeeded()
+        // SPRIG_SNAP=/tmp/x.png 时把窗口内容画成图片，不用屏幕录制权限也能看效果
+        if let path = ProcessInfo.processInfo.environment["SPRIG_SNAP"],
+           let view = window?.contentView,
+           let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+            // 先铺白底：contentView 本身透明，直接画出来会是全黑
+            NSGraphicsContext.saveGraphicsState()
+            if let context = NSGraphicsContext(bitmapImageRep: rep) {
+                NSGraphicsContext.current = context
+                NSColor.white.setFill()
+                NSRect(origin: .zero, size: view.bounds.size).fill()
+            }
+            view.cacheDisplay(in: view.bounds, to: rep)
+            NSGraphicsContext.restoreGraphicsState()
+            try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+            print("snapshot           =", path)
+        }
         print("local.url          =", localURLField.stringValue.isEmpty ? "(空)" : localURLField.stringValue)
         print("local.modelsLabel  =", localModelsLabel.stringValue)
         print("zhipu.hasKey       =", zhipuKeyField.stringValue.isEmpty ? "否" : "是")
-        print("gemini.hasKey      =", geminiKeyField.stringValue.isEmpty ? "否" : "是")
-        print("openrouter.hasKey  =", openRouterKeyField.stringValue.isEmpty ? "否" : "是")
         print("free.modelsLabel   =", freeModelsLabel.stringValue)
         print("custom.popup.items =", customPopUp.itemTitles)
         print("custom.selected    =", customPopUp.titleOfSelectedItem ?? "nil")
@@ -763,13 +1022,150 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         print("remove.enabled     =", removeButton.isEnabled)
         print("thinking.disabled  =", Settings.disableThinking)
         print("webSearch.enabled  =", Settings.webSearchEnabled)
+        print("webSearch.toggle   =", webSearchToggle.isEnabled, "state=", webSearchToggle.state.rawValue)
         print("webSearch.backend  =", Settings.searchBackend.title)
         print("webSearch.hasKey   =", Settings.webSearchAPIKey.isEmpty ? "否" : "是")
         print("webSearch.ready    =", Settings.webSearchReady)
+        print("agent.count        =", Settings.agentConfigs.count)
+        print("agent.active       =", Settings.activeAgent?.displayName ?? "(无)")
+        print("agent.command      =", Settings.acpCommand.isEmpty ? "(空)" : Settings.acpCommand)
+        print("agent.program      =", AcpEnvironment.resolveProgram(in: Settings.acpCommand) ?? "(找不到)")
+        print("agent.list         =", Settings.agentConfigs.map { "\($0.displayName)[\($0.command)]" })
+        print("agent.custom       =", Settings.agentConfigs.filter { $0.presetID == nil }.count)
+        print("agent.model        =", Settings.activeAgent?.modelID ?? "(跟随默认)",
+              Settings.activeAgent?.modelLabel ?? "")
+        print("agent.model.cache  =", Settings.activeAgent.map { Settings.cachedModels(for: $0.id).count } ?? 0)
+        print("agent.thought      =", Settings.activeAgent?.thoughtLevel ?? "(跟随默认)",
+              "options:", Settings.activeAgent.map {
+                  Settings.cachedOptions(for: $0.id).filter { $0.isThoughtLevel }.first?.choices.count ?? 0
+              } ?? 0)
+        print("agent.dismissed    =", UserDefaults.standard.stringArray(forKey: "dismissedAgentPresets") ?? [])
+        print("agent.status       =", agentStatuses.mapValues(\.label))
+        print("buttons            =", ["测试连接": testButton, "同步模型": localSyncButton,
+                                          "去获取": webSearchHelpButton, "测试全部": agentTestAllButton]
+                .map { "\($0.key):\(Int($0.value.frame.width))" }
+                .sorted())
+        print("agent.chips.frame  =", agentChips.frame)
+        print("agent.chips        =", agentChips.debugChips())
+        print("agent.workspace    =", agentWorkspaceLabel.stringValue, "→", Settings.acpWorkspacePath)
+        print("agent.selected     =", Settings.usesAgent)
         print("status             =", statusLabel.stringValue)
         print("configs.isConfigured =", Settings.providerConfigs.map { "\($0.displayName):\($0.isConfigured)" })
         print("settings.level     =", window?.level.rawValue ?? -1)
         print("panel.level        =", PanelController.shared.panel.level.rawValue)
         print("settings.abovePanel=", (window?.level.rawValue ?? -1) > PanelController.shared.panel.level.rawValue)
+    }
+}
+
+/// 编辑 agent 时的「模型」下拉 + 「读取」按钮。
+///
+/// 模型清单只能靠真开一个会话拿到，所以读取是显式动作；结果按 agent 缓存，
+/// 下次打开弹窗直接用缓存，不必再握手。
+@MainActor
+private final class AgentModelPicker: NSObject {
+    let popUp = NSPopUpButton(frame: .zero, pullsDown: false)
+    let reloadButton = PointerButton(title: "读取", target: nil, action: nil)
+
+    /// 点「读取」时回头读命令栏的最新值（用户可能刚改过）
+    var commandProvider: () -> String = { "" }
+
+    private let agentID: UUID
+    private var models: [AcpModel] = []
+    private var selected: String?
+    private var task: Task<Void, Never>?
+
+    init(agentID: UUID, selectedID: String?) {
+        self.agentID = agentID
+        self.selected = selectedID
+        super.init()
+
+        popUp.controlSize = .small
+        popUp.font = .systemFont(ofSize: 12)
+        reloadButton.bezelStyle = .rounded
+        reloadButton.controlSize = .small
+        reloadButton.font = .systemFont(ofSize: 11)
+        reloadButton.target = self
+        reloadButton.action = #selector(reload)
+        reloadButton.toolTip = "开一个会话读一次模型清单（需要几秒）"
+
+        populate(Settings.cachedModels(for: agentID))
+    }
+
+    var selectedID: String? {
+        popUp.indexOfSelectedItem <= 0 ? nil : selected
+    }
+
+    var selectedLabel: String? {
+        let index = popUp.indexOfSelectedItem
+        guard index > 0, index - 1 < models.count else { return nil }
+        return models[index - 1].name
+    }
+
+    /// 选中模型的输入窗口（token），存进配置供上下文装配使用
+    var selectedMaxInput: Int? {
+        let index = popUp.indexOfSelectedItem
+        guard index > 0, index - 1 < models.count else { return nil }
+        return models[index - 1].maxInputTokens
+    }
+
+    func stop() {
+        task?.cancel()
+        task = nil
+    }
+
+    private func populate(_ list: [AcpModel]) {
+        models = list
+        popUp.removeAllItems()
+        popUp.addItem(withTitle: list.isEmpty ? "跟随 agent 默认（点「读取」拉清单）" : "跟随 agent 默认")
+        for model in list {
+            popUp.addItem(withTitle: model.label)
+            popUp.lastItem?.toolTip = model.id
+        }
+        if let selected, let index = list.firstIndex(where: { $0.id == selected }) {
+            popUp.selectItem(at: index + 1)
+        } else {
+            popUp.selectItem(at: 0)
+        }
+    }
+
+    @objc private func reload() {
+        let command = commandProvider().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !command.isEmpty, task == nil else { return }
+        reloadButton.isEnabled = false
+        popUp.isEnabled = false
+        reloadButton.title = "读取中…"
+        let cwd = Settings.acpWorkspacePath
+        let path = AcpEnvironment.searchPath()
+        task = Task { @MainActor [weak self] in
+            // 用独立的客户端：不能把面板正在用的那个进程关掉
+            let client = AcpClient()
+            var failure: String?
+            var list: [AcpModel] = []
+            var options: [AcpConfigOption] = []
+            do {
+                let start = try await client.discover(commandLine: command, cwd: cwd, path: path)
+                list = start.models
+                options = start.options
+            } catch {
+                failure = error.localizedDescription
+            }
+            await client.shutdown()
+            guard let self else { return }
+            self.task = nil
+            self.reloadButton.isEnabled = true
+            self.popUp.isEnabled = true
+            self.reloadButton.title = "读取"
+            if let failure {
+                self.reloadButton.toolTip = failure
+                self.popUp.removeAllItems()
+                self.popUp.addItem(withTitle: "读取失败：\(failure)")
+                self.popUp.selectItem(at: 0)
+                return
+            }
+            Settings.setCachedModels(list, for: self.agentID)
+            Settings.setCachedOptions(options, for: self.agentID)
+            self.selected = self.selected ?? list.first?.id
+            self.populate(list)
+        }
     }
 }

@@ -7,6 +7,4 @@ enum AppInfo {
     /// 英文名 / 项目名：从枝干上新抽出的嫩枝
     static let englishName = "Sprig"
 
-    /// 旧包名，用于首次升级时迁移 UserDefaults（按新到旧排列）
-    static let legacyBundleIdentifiers = ["com.catking.sprig", "com.catking.conceptlens"]
 }

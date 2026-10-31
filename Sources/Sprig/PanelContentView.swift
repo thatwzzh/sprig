@@ -23,7 +23,9 @@ final class PanelContentView: NSView {
     let tree = KnowledgeTreeView()
     let treeToggle = PointerButton()
     let searchToggle = PointerButton()
+    let thinkingButton = PointerButton()
     let modelButton = ModelPickerButton()
+    let permissionBar = PermissionBar()
 
     var onTreeToggle: (() -> Void)?
     var onSearchToggle: (() -> Void)?
@@ -87,6 +89,8 @@ final class PanelContentView: NSView {
         addSubview(bottomSeparator)
         addSubview(bottomScroll)
         addSubview(selectionBar)
+        permissionBar.isHidden = true
+        addSubview(permissionBar)
 
         treeToggle.isBordered = false
         treeToggle.bezelStyle = .inline
@@ -106,6 +110,18 @@ final class PanelContentView: NSView {
         searchToggle.target = self
         searchToggle.action = #selector(handleSearchToggle)
         addSubview(searchToggle)
+
+        // 思考强度：agent 暴露 thought_level 时可调，位置在联网开关左边
+        thinkingButton.isBordered = false
+        thinkingButton.bezelStyle = .inline
+        thinkingButton.image = NSImage(systemSymbolName: "brain", accessibilityDescription: "思考强度")
+        thinkingButton.imagePosition = .imageLeading
+        thinkingButton.font = .systemFont(ofSize: 11)
+        thinkingButton.imageScaling = .scaleProportionallyDown
+        thinkingButton.contentTintColor = .secondaryLabelColor
+        thinkingButton.target = self
+        thinkingButton.action = #selector(handleThinkingTap)
+        addSubview(thinkingButton)
         refreshSearchToggle()
 
         addSubview(modelButton)
@@ -170,12 +186,26 @@ final class PanelContentView: NSView {
         onTreeToggle?()
     }
 
+    var onThinkingTap: (() -> Void)?
+
+    @objc private func handleThinkingTap() {
+        onThinkingTap?()
+    }
+
     @objc private func handleSearchToggle() {
         onSearchToggle?()
     }
 
     /// 开关状态变了（自己点，或设置页改过）就同步图标颜色和提示
     func refreshSearchToggle() {
+        // agent 自己决定联不联网，知枝这边的开关在 agent 模式下没有意义
+        if Settings.usesAgent {
+            searchToggle.isEnabled = false
+            searchToggle.contentTintColor = .tertiaryLabelColor
+            searchToggle.toolTip = "当前由 agent 回答，联不联网由它自己决定"
+            return
+        }
+        searchToggle.isEnabled = true
         let enabled = Settings.webSearchEnabled
         searchToggle.contentTintColor = enabled ? .controlAccentColor : .secondaryLabelColor
         if Settings.webSearchAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -212,6 +242,19 @@ final class PanelContentView: NSView {
         selectionBar.isHidden = true
     }
 
+    func showPermission(title: String, detail: String, options: [(id: String, name: String)]) {
+        hideSelectionBar()
+        permissionBar.present(title: title, detail: detail, options: options)
+        permissionBar.isHidden = false
+        addSubview(permissionBar, positioned: .below, relativeTo: dimView)
+        needsLayout = true
+    }
+
+    func hidePermission() {
+        permissionBar.clear()
+        permissionBar.isHidden = true
+    }
+
     override func layout() {
         super.layout()
         blur.frame = bounds
@@ -240,18 +283,30 @@ final class PanelContentView: NSView {
             width: Theme.searchToggleSize,
             height: Theme.searchToggleSize)
 
+        // 图标 + 档位短名，宽度按内容自适应
+        let thinkingWidth = max(Theme.thoughtToggleSize, ceil(thinkingButton.intrinsicContentSize.width))
+        thinkingButton.frame = NSRect(
+            x: rightEdge - Theme.treeToggleSize - Theme.modelButtonGap - Theme.searchToggleSize
+                - Theme.modelButtonGap - thinkingWidth,
+            y: searchY,
+            width: thinkingWidth,
+            height: Theme.thoughtToggleSize)
+
         // 模型按钮贴在输入框右下角：单行输入时正好垂直居中，多行时留在底部
         let pickerY = top - inputHeight + (Theme.inputMinHeight - ModelPickerButton.height) / 2
         modelButton.frame = NSRect(
             x: rightEdge - Theme.treeToggleSize - Theme.modelButtonGap - Theme.searchToggleSize
+                - Theme.modelButtonGap - thinkingWidth
                 - Theme.modelButtonGap - ModelPickerButton.width,
             y: pickerY,
             width: ModelPickerButton.width,
             height: ModelPickerButton.height)
 
+        let accessoryWidth = Theme.inputAccessoryWidth
+            - Theme.thoughtToggleSize + thinkingWidth
         inputScroll.frame = NSRect(x: Theme.horizontalInset,
                                    y: top - inputHeight,
-                                   width: width - Theme.horizontalInset * 2 - Theme.inputAccessoryWidth,
+                                   width: width - Theme.horizontalInset * 2 - accessoryWidth,
                                    height: inputHeight)
         top -= inputHeight
 
@@ -290,6 +345,10 @@ final class PanelContentView: NSView {
         // 右边留 8pt：答案文字的行尾紧贴边缘不好读，和分隔线错开也更透气
         answerScroll.frame = NSRect(x: 0, y: bottomHeight + 1,
                                     width: width - 8, height: max(0, top - bottomHeight - 1))
+        if !permissionBar.isHidden {
+            let barWidth = width - 24
+            permissionBar.frame = NSRect(x: 12, y: bottomHeight + 10, width: barWidth, height: 72)
+        }
         // documentView 的 autoresizing 不可靠：窗口变窄后它可能停在旧宽度上，
         // 于是文字被画到可视区外。这里每次布局都对齐一次。
         if let doc = answerScroll.documentView, doc.frame.width != answerScroll.contentSize.width {
