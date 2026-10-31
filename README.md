@@ -28,7 +28,8 @@
 
 1. 从 [Releases](https://github.com/thatwzzh/sprig/releases) 下载最新的 `.zip`
 2. 解压，把 `Sprig.app` 拖进「应用程序」
-3. 首次打开会提示「无法验证开发者」——去**系统设置 → 隐私与安全性**点「仍要打开」
+3. 首次打开会被系统拦下（「无法验证开发者」或「Apple 无法验证…恶意软件」）——先关掉弹窗，
+   再去**系统设置 → 隐私与安全性 → 拉到底**点「仍要打开」，输密码或触控 ID 确认
 4. 菜单栏出现图标后，按 `⌥Space` 唤起面板
 
 ### 2. 接入模型或 agent
@@ -247,7 +248,8 @@ defaults import com.catking.sprig.app ~/sprig-backup.plist
 
 ### 提示「无法验证开发者」
 
-系统设置 → 隐私与安全性 → 拉到底，点「仍要打开」。
+关掉弹窗，再去系统设置 → 隐私与安全性 → 拉到底，点「仍要打开」，输密码或触控 ID。
+按钮只在你第一次被拦下后的一段时间内出现；打开过一次系统就记住了。
 
 ### 菜单栏图标不见了
 
@@ -280,6 +282,34 @@ swift test --disable-sandbox   # 单测
 ./scripts/restart-app.sh       # 退出旧实例 → 打包 → 启动 → 校验只有一个实例
 ```
 
+### 发版
+
+版本号只有一个来源：**git tag**。打包脚本从这里读，代码里不写死。
+
+```bash
+git checkout main && git pull --ff-only
+git tag v0.2.1                  # 或者给已有提交补 tag
+git push origin v0.2.1
+
+./scripts/release.sh            # 检查 → 构建 → 校验 → build/Sprig-v0.2.1.zip
+./scripts/release.sh --check    # 只做检查，不构建
+```
+
+脚本会拦下四种「版本会错」的情况：工作区有未提交改动、不在 main、HEAD 不在 tag 上、包内版本/tag 对不上。
+出包后还会校验 bundle id、build 号、签名，并跑一遍 `--selftest`。
+
+确认产物没问题再上传：
+
+```bash
+gh release create v0.2.1 build/Sprig-v0.2.1.zip --title "知枝 v0.2.1" --notes "…"
+```
+
+本地开发想避开已安装的版本时，用另一个 bundle id：
+
+```bash
+SPRIG_BUNDLE_ID=com.catking.sprig.dev ./scripts/make-app.sh
+```
+
 ### 命令行调试参数
 
 ```bash
@@ -299,6 +329,8 @@ Sprig --chart-demo /tmp/chart.png         # 画两张示例图表
 Sprig --mermaid-demo /tmp/flow.png        # 渲染一段示例 mermaid 流程图
 Sprig --html-demo /tmp/html.png           # 渲染一段示例 HTML 并落盘
 Sprig --readme-shots /tmp/shots           # 用临时知识库生成 README 配图（面板 / 设置页）
+Sprig --status-trace                      # 把状态栏项的窗口位置写到 /tmp/sprig-status.log
+SPRIG_BUNDLE_ID=com.catking.sprig.dev ./scripts/make-app.sh   # 换 bundle id 打包（本地开发用）
 ```
 
 `--selftest` / `--tree-dump` / `--settings --dump` 是为拿不到屏幕录制权限的环境准备的：用数值验证布局，而不是截图。

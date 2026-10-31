@@ -767,6 +767,11 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
                 self.content.tree.focusSearch()
                 return nil
             }
+            // ⌘, 直接开设置。面板是浮动层，菜单栏菜单点不到，本地快捷键是唯一入口
+            if key == "," {
+                SettingsWindowController.shared.present()
+                return nil
+            }
 
             let selector: Selector?
             switch key {
@@ -2056,6 +2061,9 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         print("modelButton.frame  =", content.modelButton.frame)
         print("modelButton.label  =", content.modelButton.label)
         print("modelMenu.items    =", makeModelMenu().items.map(\.title))
+        print("menus              =", NSApp.mainMenu?.items.compactMap {
+            $0.submenu?.items.map(\.title)
+        } ?? [])
         print("providers.count    =", Settings.providerConfigs.count)
         print("active.isLocal     =", Settings.provider.isLocal)
         print("stack.depth        =", stack.count)

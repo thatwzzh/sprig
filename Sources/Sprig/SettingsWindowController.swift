@@ -26,7 +26,6 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
     private let addButton = PointerButton(title: "＋", target: nil, action: nil)
     private let pathLabel = NSTextField(labelWithString: "")
     private let statusLabel = NSTextField(labelWithString: "")
-    private let fetchButton = PointerButton(title: "拉取", target: nil, action: nil)
     private let testButton = PointerButton(title: "测试连接", target: nil, action: nil)
     private let syncFreeButton = PointerButton(title: "同步模型", target: nil, action: nil)
     private let removeButton = PointerButton(title: "－", target: nil, action: nil)
@@ -450,11 +449,6 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
     }
 
     /// 免费组排序：目前只有智谱，留着顺序位以便以后加
-    private var freeConfigs: [ProviderConfig] {
-        Settings.providerConfigs
-            .filter { $0.resolvedCategory == .free }
-            .sorted { (a: ProviderConfig, b: ProviderConfig) in a.freeSortRank < b.freeSortRank }
-    }
 
     private var zhipuConfig: ProviderConfig? {
         Settings.providerConfigs.first { $0.baseURL.lowercased().contains("bigmodel") }

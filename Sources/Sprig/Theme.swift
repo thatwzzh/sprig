@@ -37,7 +37,6 @@ enum Theme {
     static let composerFont = NSFont.systemFont(ofSize: 13)
     static let questionFont = NSFont.systemFont(ofSize: 12.5)
     static let answerFont = NSFont.systemFont(ofSize: 14)
-    static let answerFontPointSize: CGFloat = 14
 
     /// 段落样式：流式时每个 chunk 追加都要用，做成常量避免反复分配
     /// 搜索提示行用：段前段后都不留白，行距也压到最小，

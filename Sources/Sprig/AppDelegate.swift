@@ -29,6 +29,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         setupMainMenu()
         setupStatusItem()
+
+        if CommandLine.arguments.contains("--status-trace") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+                let item = self?.statusItem
+                let text = """
+                bundle=\(Bundle.main.bundleIdentifier ?? "nil")
+                path=\(Bundle.main.bundlePath)
+                item=\(item != nil) visible=\(item?.isVisible ?? false)
+                window=\(item?.button?.window?.frame.debugDescription ?? "nil")
+                windowVisible=\(item?.button?.window?.isVisible ?? false)
+                """
+                try? text.write(toFile: "/tmp/sprig-status.log", atomically: true, encoding: .utf8)
+            }
+        }
+        if ProcessInfo.processInfo.environment["SPRIG_STATUS_TRACE"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+                let item = self?.statusItem
+                print("status.item       =", item != nil)
+                print("status.isVisible  =", item?.isVisible ?? false)
+                print("status.button     =", item?.button?.frame.debugDescription ?? "nil")
+                print("status.window     =", item?.button?.window?.frame.debugDescription ?? "nil")
+                print("status.windowVis  =", item?.button?.window?.isVisible ?? false)
+                print("screen.frame      =", NSScreen.main?.frame.debugDescription ?? "nil")
+            }
+        }
         PanelController.shared.prewarm()
 
         KeyboardShortcuts.onKeyUp(for: .togglePanel) {
@@ -370,6 +395,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let appItem = NSMenuItem()
         mainMenu.addItem(appItem)
         let appMenu = NSMenu()
+        let settingsItem = NSMenuItem(title: "设置…",
+                                      action: #selector(openSettings),
+                                      keyEquivalent: ",")
+        settingsItem.target = self
+        appMenu.addItem(settingsItem)
+        appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "退出 \(AppInfo.name)",
                         action: #selector(NSApplication.terminate(_:)),
                         keyEquivalent: "q")

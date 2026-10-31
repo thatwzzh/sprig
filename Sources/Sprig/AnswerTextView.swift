@@ -478,39 +478,6 @@ final class AnswerTextView: NSTextView {
 
     /// 联网搜索的来源列表：标题可点（打开原文），后面跟域名。
     /// 不用 `append(text:term:)` 是因为这里要混排三种属性（灰点、链接、暗色域名）。
-    func appendSearchItems(_ items: [SearchItem]) {
-        guard let storage = textStorage, !items.isEmpty else { return }
-
-        let base: [NSAttributedString.Key: Any] = [
-            .font: Theme.answerFont,
-            .foregroundColor: NSColor.labelColor,
-            .paragraphStyle: Theme.answerParagraph,
-        ]
-        let dim: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 11.5),
-            .foregroundColor: NSColor.tertiaryLabelColor,
-            .paragraphStyle: Theme.answerParagraph,
-        ]
-
-        for item in items {
-            let line = NSMutableAttributedString()
-            line.append(NSAttributedString(string: "\n · ", attributes: dim))
-
-            if let url = URL(string: item.url), !item.url.isEmpty {
-                var linked = base
-                linked[.link] = url
-                linked[.foregroundColor] = NSColor.linkColor
-                line.append(NSAttributedString(string: item.title, attributes: linked))
-            } else {
-                line.append(NSAttributedString(string: item.title, attributes: base))
-            }
-
-            if let host = item.host {
-                line.append(NSAttributedString(string: "  \(host)", attributes: dim))
-            }
-            storage.append(line)
-        }
-    }
 
     static func term(from url: URL) -> String? {
         guard url.scheme == "concept",

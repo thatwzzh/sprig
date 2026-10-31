@@ -36,17 +36,6 @@ public struct ProviderConfig: Codable, Identifiable, Sendable, Equatable {
 
         /// 本地模型上下文窗口小、对长输入更敏感，用紧一点的上下文预算
         public var isLocal: Bool { self == .ollama }
-
-        /// 能确定的窗口大小。Ollama 靠探测、OpenAI 兼容各家不同，都返回 nil。
-        public var knownContextLength: Int? { nil }
-
-        /// 设置页里 Base URL / 模型的输入提示
-        public var baseURLHint: String {
-            switch self {
-            case .ollama: return "http://127.0.0.1:11434"
-            case .openAICompatible: return "填到 /v1 或只填域名都可以"
-            }
-        }
     }
 
     /// 设置页和面板菜单按这三类组织。

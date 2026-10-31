@@ -35,7 +35,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleExecutable</key>
     <string>Sprig</string>
     <key>CFBundleIdentifier</key>
-    <string>com.catking.sprig.app</string>
+    <string>__BUNDLE_ID__</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleInfoDictionaryVersion</key>
@@ -61,6 +61,24 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
+
+# bundle id 可覆盖：本地开发时换一个，避开 macOS 对旧 id 的菜单栏授权记录
+BUNDLE_ID="${SPRIG_BUNDLE_ID:-com.catking.sprig.app}"
+/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier ${BUNDLE_ID}" "$APP/Contents/Info.plist"
+
+# 版本号从 git tag 读：v0.2.0 → 0.2.0；CFBundleVersion 用提交数，保证单调递增
+VERSION="${SPRIG_VERSION:-}"
+if [ -z "$VERSION" ]; then
+  VERSION=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)
+fi
+if [ -z "$VERSION" ]; then
+  VERSION="0.0.0"
+  echo "!! 没有 git tag，版本号回落为 ${VERSION}（打一个 tag 就好）"
+fi
+BUILD_NUMBER=$(git rev-list --count HEAD 2>/dev/null || echo 1)
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" "$APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD_NUMBER}" "$APP/Contents/Info.plist"
+echo "版本 ${VERSION}（build ${BUILD_NUMBER}）"
 
 codesign --force --sign - "$APP" >/dev/null 2>&1 || true
 echo "$APP"

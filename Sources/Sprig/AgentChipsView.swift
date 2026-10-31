@@ -68,10 +68,6 @@ final class AgentChipsView: NSView {
         chips.first { $0.config.id == id }?.status = status
     }
 
-    func setActive(_ id: UUID?) {
-        activeID = id
-        for chip in chips { chip.isActive = chip.config.id == id }
-    }
 
     override func layout() {
         super.layout()

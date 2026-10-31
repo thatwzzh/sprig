@@ -49,9 +49,6 @@ public enum ContextAssembler {
                                          maxAncestors: 12,
                                          toolReserve: 0)
 
-        public static func forLocal(_ isLocal: Bool) -> Policy {
-            isLocal ? .local : .cloud
-        }
 
         /// 按模型真实窗口算预算。
         ///
