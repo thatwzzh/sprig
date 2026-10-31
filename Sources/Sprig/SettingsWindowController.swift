@@ -978,6 +978,11 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         window.makeKey()
     }
 
+    /// 演示/脚本用：把设置关掉，焦点按 windowWillClose 的规则还回去
+    func dismiss() {
+        window?.close()
+    }
+
     /// 设置关掉后把焦点还给面板，免得面板看着还在、却接不到键盘输入
     func windowWillClose(_ notification: Notification) {
         let panel = PanelController.shared.panel

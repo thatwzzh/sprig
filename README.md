@@ -310,6 +310,21 @@ gh release create v0.2.1 build/Sprig-v0.2.1.zip --title "知枝 v0.2.1" --notes 
 SPRIG_BUNDLE_ID=com.catking.sprig.dev ./scripts/make-app.sh
 ```
 
+### 演示入口
+
+给录屏用的脚本化演示，**不需要任何系统权限**（不像模拟按键要辅助功能）：
+
+```bash
+open -a build/Sprig.app "sprig://demo?step=1"   # 面板 + 一张示例答案
+open -a build/Sprig.app "sprig://demo?step=2"   # 展开知识树
+open -a build/Sprig.app "sprig://demo?step=3"   # 切到子卡
+open -a build/Sprig.app "sprig://demo?step=4"   # 打开设置
+open -a build/Sprig.app "sprig://demo?step=0"   # 复位，回到真实知识库
+```
+
+演示用的是 `~/Library/Caches/Sprig/demo` 里的临时库，**不会动你的卡片**；`step=0` 会切回真实库，
+下次启动也会自动切回。加 `&snap=1` 会把当前面板画到 `/tmp/sprig-demo-step<N>.png`，方便核对。
+
 ### 命令行调试参数
 
 ```bash

@@ -58,6 +58,15 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <true/>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+      <dict>
+        <key>CFBundleURLName</key>
+        <string>com.catking.sprig.demo</string>
+        <key>CFBundleURLSchemes</key>
+        <array><string>sprig</string></array>
+      </dict>
+    </array>
 </dict>
 </plist>
 PLIST

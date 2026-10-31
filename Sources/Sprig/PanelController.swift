@@ -9,6 +9,9 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
     private var backgroundErrors: [UUID: String] = [:]
     /// 正在画 mermaid 的卡片，避免重复起任务
     private var diagramJobs: Set<UUID> = []
+    private var demoActive = false
+    private var demoRoot: AnswerCard?
+    private var demoChild: AnswerCard?
 
     private struct Node {
         var card: AnswerCard
@@ -1473,6 +1476,87 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         try? rep.representation(using: .png, properties: [:])?.write(to: url)
     }
 
+    // MARK: - 演示入口（sprig://demo?step=N）
+
+    /// `sprig://demo?step=N`：给录屏用的脚本化演示，**不需要任何系统权限**。
+    /// 1 打开面板 → 2 展开知识树 → 3 切到子卡 → 4 打开设置 → 0 复位。
+    func handleDemoURL(_ url: URL) {
+        guard url.host == "demo" else { return }
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        let step = Int(items.first { $0.name == "step" }?.value ?? "") ?? 1
+        let snap = items.contains { $0.name == "snap" && $0.value == "1" }
+        Task { @MainActor in await runDemo(step: step, snapshot: snap) }
+    }
+
+    private func runDemo(step: Int, snapshot: Bool) async {
+        if step == 0 {
+            await exitDemo()
+            return
+        }
+        await enterDemoIfNeeded()
+        guard let root = demoRoot else { return }
+
+        if step == 4 {
+            SettingsWindowController.shared.present()
+        } else {
+            show()
+            switch step {
+            case 2:
+                if !isTreeVisible { setTreeVisible(true) }
+                stack = [Node(card: root, raw: root.answer, scroll: 0)]
+            case 3:
+                if !isTreeVisible { setTreeVisible(true) }
+                var nodes = [Node(card: root, raw: root.answer, scroll: 0)]
+                if let child = demoChild {
+                    nodes.append(Node(card: child, raw: child.answer, scroll: 0))
+                }
+                stack = nodes
+            default:
+                if isTreeVisible { setTreeVisible(false) }
+                stack = [Node(card: root, raw: root.answer, scroll: 0)]
+            }
+            renderCurrent()
+            content.tree.reload(currentID: stack.last?.card.id)
+            if let card = stack.last?.card { prepareMermaidIfNeeded(for: card) }
+            content.layoutSubtreeIfNeeded()
+        }
+
+        // 等 mermaid 渲染和淡入动画
+        try? await Task.sleep(nanoseconds: 900_000_000)
+        content.layoutSubtreeIfNeeded()
+        if snapshot, let view = panel.contentView {
+            writePNG(view, to: URL(fileURLWithPath: "/tmp/sprig-demo-step\(step).png"))
+        }
+    }
+
+    private func enterDemoIfNeeded() async {
+        guard !demoActive else { return }
+        demoActive = true
+        let library = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Sprig/demo", isDirectory: true)
+        try? FileManager.default.removeItem(at: library)
+        await CardStore.shared.useEmptyLibrary(at: library)
+        let demo = Self.demoCards()
+        for card in demo.all { await CardStore.shared.upsert(card) }
+        demoRoot = demo.root
+        demoChild = demo.child
+    }
+
+    private func exitDemo() async {
+        guard demoActive else {
+            hide()
+            return
+        }
+        demoActive = false
+        demoRoot = nil
+        demoChild = nil
+        SettingsWindowController.shared.dismiss()
+        await CardStore.shared.useDirectory(Settings.cardsDirectory)
+        resetToEmpty()
+        content.tree.reload(currentID: nil)
+        hide()
+    }
+
     /// README 截图：在一个临时空库里造一棵示例树，拍面板。
     /// 不走真实知识库，所以不会把你自己的卡片拍进去。
     func debugReadmeShots(into directory: URL) async {
@@ -1485,27 +1569,9 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         try? FileManager.default.removeItem(at: library)
         await CardStore.shared.useEmptyLibrary(at: library)
 
-        let root = AnswerCard(title: "RAG",
-                              question: "RAG 是什么？它解决了什么问题？",
-                              answer: Self.demoAnswer)
-        let hallucination = AnswerCard(parentID: root.id,
-                                       title: "幻觉",
-                                       question: "解释「幻觉」",
-                                       answer: "指模型编造看似合理、实际并不存在的内容，"
-                                           + "比如虚构的引用、数字和论文标题。",
-                                       selectedText: "幻觉")
-        let vector = AnswerCard(parentID: root.id,
-                                title: "向量数据库",
-                                question: "解释「向量数据库」",
-                                answer: "把文本转成向量后存起来，按相似度检索。\n\n"
-                                    + "RAG 里的「检索」通常就落在它身上：先找最相近的几段，再交给模型。",
-                                selectedText: "检索")
-        let grounded = AnswerCard(parentID: hallucination.id,
-                                  title: "事实性",
-                                  question: "怎么判断事实性？",
-                                  answer: "看结论有没有出处：能指到原文段落，才算站得住。",
-                                  selectedText: "编造")
-        for card in [root, hallucination, vector, grounded] {
+        let demo = Self.demoCards()
+        let root = demo.root
+        for card in demo.all {
             await CardStore.shared.upsert(card)
         }
 
@@ -1527,6 +1593,31 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
             writePNG(view, to: directory.appendingPathComponent("panel.png"))
             print("[readme] panel ->", view.bounds.size, "px:", Int(view.bounds.width * 2))
         }
+    }
+
+    /// 演示用的一组卡片。截图和 sprig://demo 共用同一份内容。
+    static func demoCards() -> (root: AnswerCard, child: AnswerCard, all: [AnswerCard]) {
+        let root = AnswerCard(title: "RAG",
+                              question: "RAG 是什么？它解决了什么问题？",
+                              answer: demoAnswer)
+        let hallucination = AnswerCard(parentID: root.id,
+                                       title: "幻觉",
+                                       question: "解释「幻觉」",
+                                       answer: "指模型编造看似合理、实际并不存在的内容，"
+                                           + "比如虚构的引用、数字和论文标题。",
+                                       selectedText: "幻觉")
+        let vector = AnswerCard(parentID: root.id,
+                                title: "向量数据库",
+                                question: "解释「向量数据库」",
+                                answer: "把文本转成向量后存起来，按相似度检索。\n\n"
+                                    + "RAG 里的「检索」通常就落在它身上：先找最相近的几段，再交给模型。",
+                                selectedText: "检索")
+        let grounded = AnswerCard(parentID: hallucination.id,
+                                  title: "事实性",
+                                  question: "怎么判断事实性？",
+                                  answer: "看结论有没有出处：能指到原文段落，才算站得住。",
+                                  selectedText: "编造")
+        return (root, hallucination, [root, hallucination, vector, grounded])
     }
 
     private static let demoAnswer = """

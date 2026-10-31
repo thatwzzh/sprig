@@ -372,11 +372,18 @@ final class KnowledgeTreeView: NSView {
         }
         for card in cards {
             guard let node = map[card.id] else { continue }
-            let ordered = (grouped[card.id] ?? []).sorted { $0.createdAt < $1.createdAt }
+            let ordered = (grouped[card.id] ?? []).sorted { a, b in
+                // createdAt 精度是毫秒级，连续创建的卡片会打平；用 id 兜底，顺序才稳定
+                a.createdAt == b.createdAt ? a.id.uuidString < b.id.uuidString
+                                           : a.createdAt < b.createdAt
+            }
             node.children = ordered.compactMap { map[$0.id] }
         }
         roots = (grouped[nil] ?? [])
-            .sorted { $0.createdAt > $1.createdAt }
+            .sorted { a, b in
+                a.createdAt == b.createdAt ? a.id.uuidString < b.id.uuidString
+                                           : a.createdAt > b.createdAt
+            }
             .compactMap { map[$0.id] }
 
         outline.reloadData()

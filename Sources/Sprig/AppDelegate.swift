@@ -11,6 +11,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AcpClient.shared.killForQuit()
     }
 
+    /// sprig://demo?step=N 由 LaunchServices 送到这里
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            PanelController.shared.handleDemoURL(url)
+        }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
 
