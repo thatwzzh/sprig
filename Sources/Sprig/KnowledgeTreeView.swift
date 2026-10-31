@@ -187,13 +187,11 @@ private final class TreeOutlineView: NSOutlineView {
 /// 右侧知识树：搜索过滤 + 原位重命名 + hover 删除。
 final class KnowledgeTreeView: NSView {
     var onSelect: ((AnswerCard) -> Void)?
-    var onClose: (() -> Void)?
     var onRename: ((AnswerCard, String) -> Void)?
     var onDelete: ((AnswerCard) -> Void)?
 
     private let headerLabel = NSTextField(labelWithString: "知识树")
     private let countLabel = NSTextField(labelWithString: "")
-    private let closeButton = PointerButton(title: "×", target: nil, action: nil)
     private let searchField = NSSearchField()
     private let scroll = NSScrollView()
     private let outline = TreeOutlineView()
@@ -223,14 +221,6 @@ final class KnowledgeTreeView: NSView {
 
         countLabel.font = NSFont.systemFont(ofSize: 10.5)
         countLabel.textColor = .tertiaryLabelColor
-
-        closeButton.isBordered = false
-        closeButton.bezelStyle = .inline
-        closeButton.font = NSFont.systemFont(ofSize: 14, weight: .regular)
-        closeButton.contentTintColor = .secondaryLabelColor
-        closeButton.target = self
-        closeButton.action = #selector(handleClose)
-        closeButton.toolTip = "收起知识树（⌘⇧T）"
 
         searchField.placeholderString = "搜索标题或正文…"
         searchField.font = NSFont.systemFont(ofSize: 11)
@@ -278,7 +268,6 @@ final class KnowledgeTreeView: NSView {
 
         addSubview(headerLabel)
         addSubview(countLabel)
-        addSubview(closeButton)
         addSubview(searchField)
         addSubview(scroll)
         addSubview(emptyLabel)
@@ -293,7 +282,6 @@ final class KnowledgeTreeView: NSView {
         let width = bounds.width
         headerLabel.frame = NSRect(x: Theme.horizontalInset, y: bounds.height - 26, width: 100, height: 16)
         countLabel.frame = NSRect(x: Theme.horizontalInset + 58, y: bounds.height - 25, width: 80, height: 14)
-        closeButton.frame = NSRect(x: width - 30, y: bounds.height - 28, width: 20, height: 20)
         searchField.frame = NSRect(x: 10, y: bounds.height - 54, width: max(0, width - 20), height: 22)
         scroll.frame = NSRect(x: 0, y: 0, width: width, height: max(0, bounds.height - headerHeight))
 
@@ -478,9 +466,6 @@ final class KnowledgeTreeView: NSView {
         onRename?(card, value)
     }
 
-    @objc private func handleClose() {
-        onClose?()
-    }
 }
 
 extension KnowledgeTreeView: NSSearchFieldDelegate {

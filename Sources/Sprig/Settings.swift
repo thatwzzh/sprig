@@ -104,9 +104,12 @@ enum Settings {
 
     private static let readingThemeKey = "readingTheme"
 
-    /// 答案区阅读主题：default / github / newsprint
+    /// 答案区阅读主题。默认 GitHub；旧版本存过 `default`，那个选项已下线，一并回落到 GitHub。
     static var readingTheme: String {
-        get { UserDefaults.standard.string(forKey: readingThemeKey) ?? MarkdownTheme.default.id }
+        get {
+            let raw = UserDefaults.standard.string(forKey: readingThemeKey) ?? MarkdownTheme.fallback.id
+            return MarkdownTheme.all.contains { $0.id == raw } ? raw : MarkdownTheme.fallback.id
+        }
         set { UserDefaults.standard.set(newValue, forKey: readingThemeKey) }
     }
 
@@ -564,8 +567,12 @@ enum Settings {
             ?? URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true).appendingPathComponent("Documents", isDirectory: true)
     }
 
+    /// 截图/演示用：只影响当前进程，不写偏好设置，也不碰真实知识库。
+    static var cardsDirectoryOverride: URL?
+
     static var cardsDirectory: URL {
         get {
+            if let cardsDirectoryOverride { return cardsDirectoryOverride }
             guard let raw = UserDefaults.standard.string(forKey: cardsDirectoryKey), !raw.isEmpty else {
                 return defaultCardsDirectory
             }

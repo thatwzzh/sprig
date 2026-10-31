@@ -177,7 +177,10 @@ final class PanelContentView: NSView {
         treeVisible = visible
         tree.isHidden = !visible
         treeDivider.isHidden = !visible
-        treeToggle.isHidden = visible
+        // 按钮常显：开着的时候点它就是把树收起来
+        treeToggle.isHidden = false
+        treeToggle.toolTip = visible ? "收起知识树（⌘⇧T）" : "展开知识树（⌘⇧T）"
+        treeToggle.contentTintColor = visible ? .controlAccentColor : .secondaryLabelColor
         hideSelectionBar()
         needsLayout = true
     }
@@ -270,13 +273,16 @@ final class PanelContentView: NSView {
         }
 
         let rightEdge = width - Theme.horizontalInset
-        treeToggle.frame = NSRect(x: rightEdge - Theme.treeToggleSize,
-                                  y: bounds.height - 34,
-                                  width: Theme.treeToggleSize,
-                                  height: Theme.treeToggleSize)
 
         // 联网搜索开关：和模型胶囊同一行，垂直居中于输入框
         let searchY = top - inputHeight + (Theme.inputMinHeight - Theme.searchToggleSize) / 2
+
+        // 树开关和右边的图标同一套基线，别再自己算一个 y
+        treeToggle.frame = NSRect(x: rightEdge - Theme.treeToggleSize,
+                                  y: searchY,
+                                  width: Theme.treeToggleSize,
+                                  height: Theme.searchToggleSize)
+
         searchToggle.frame = NSRect(
             x: rightEdge - Theme.treeToggleSize - Theme.modelButtonGap - Theme.searchToggleSize,
             y: searchY,

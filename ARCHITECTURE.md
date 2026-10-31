@@ -410,6 +410,15 @@ claude / codex / gemini 这类 agent 用**正常 HOME**：它们的登录态本�
 导出侧 `CardMarkdown.expandChartBlocks` 把 `sprig-chart` 代码块转成两列表格，
 知识库里永远是可读的 Markdown。
 
+代码块按语言着色：`SprigCore/CodeHighlighter` 手写扫描（注释/字符串/数字/标识符 + 每门语言一张关键字表），
+**输入输出必须逐字相等**（有测试锁着），不认识的语言整段按 plain 处理。token 色不跟主题走，统一一套明暗。
+
+```mermaid 走 `MermaidSnapshot`：运行时（3.4MB `mermaid.min.js`）随包放在 `Contents/Resources`，
+WKWebView 载入后轮询 `<svg>` 出现再截图。注意 mermaid 11 的 dist 是 esbuild 包，**没有 `window.mermaid`**，
+要从 `globalThis.__esbuild_esm_mermaid_nm.mermaid.default` 取。渲染宽度固定 `Theme.answerTextWidth`（616），
+**不要拿 `bounds.width` 当缓存键**——布局过程中它会从 1 变到 640，键一抖就查不到图。
+画不出来（运行时缺失/语法错）退回代码块显示源码。
+
 **报错不落盘**：失败文案只放在 `Node.errorText`（面板显示用），末尾带一个 `sprig://retry` 链接——
 点击由 `textView(_:clickedOnLink:)` 分发到 `retryTurn()`，用同一张卡重建原请求重跑。不写进 `card.answer`，
 所以既不会进 JSON 也不会被 `CardMarkdown` 同步进 Markdown。卡片保留问题、答案留空。

@@ -14,6 +14,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
 
+        // --readme-shots 用临时知识库截图：必须在下面 CardStore 切库之前定下来
+        if let index = CommandLine.arguments.firstIndex(of: "--readme-shots"),
+           index + 1 < CommandLine.arguments.count {
+            let directory = URL(fileURLWithPath: CommandLine.arguments[index + 1], isDirectory: true)
+            Settings.cardsDirectoryOverride = directory.appendingPathComponent("library", isDirectory: true)
+        }
+
         Settings.prepareAgentWorkspace()
         // 新装的 agent 启动时并进列表，面板菜单里就能直接选
         Settings.syncDetectedAgents()
@@ -216,6 +223,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return
         }
+        if let index = arguments.firstIndex(of: "--mermaid-demo"), index + 1 < arguments.count {
+            // 核对 mermaid 渲染链路：不经过模型，直接把一段流程图落成 PNG
+            let sample = """
+            flowchart LR
+                A[主上下文] -->|任务描述| B[子代理上下文]
+                B -->|全库扫描 大量中间输出| C[(噪音留在此处)]
+                B -->|仅结论 + 关键指针| A
+            """
+            Task { @MainActor in
+                if let image = await MermaidSnapshot.image(for: sample),
+                   let data = NSBitmapImageRep(data: image.tiffRepresentation ?? Data())?
+                    .representation(using: .png, properties: [:]) {
+                    try? data.write(to: URL(fileURLWithPath: arguments[index + 1]))
+                    print("mermaid demo ->", arguments[index + 1])
+                } else {
+                    print("mermaid demo 渲染失败（运行时缺失或语法错误）")
+                }
+                exit(0)
+            }
+            return
+        }
         if let index = arguments.firstIndex(of: "--chart-demo"), index + 1 < arguments.count {
             // 只用于核对图表排版：画一组示例，直接落成 PNG 后退出
             let bar = ChartSpec(kind: .bar, title: "季度营收（万元）",
@@ -244,6 +272,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 print("chart demo ->", arguments[index + 1])
             }
             exit(0)
+        }
+        if let index = arguments.firstIndex(of: "--readme-shots"), index + 1 < arguments.count {
+            let directory = URL(fileURLWithPath: arguments[index + 1], isDirectory: true)
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            Task { @MainActor in
+                await PanelController.shared.debugReadmeShots(into: directory)
+                PanelController.shared.hide()
+
+                SettingsWindowController.shared.present()
+                try? await Task.sleep(nanoseconds: 700_000_000)
+                SettingsWindowController.shared.snapshotAgentSection(
+                    to: directory.appendingPathComponent("settings-agent.png"))
+
+                print("[readme] done ->", directory.path)
+                exit(0)
+            }
+            return
         }
         if arguments.contains("--selftest") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {

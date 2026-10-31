@@ -28,6 +28,9 @@ enum Theme {
         + modelButtonGap + ModelPickerButton.width
         + modelButtonGap
     /// 输入框里文字可用的宽度
+    /// 答案区文本的真实宽度：面板 − 答案区左右留白（16×2）− 文本容器内边距（16×2）
+    static let answerTextWidth: CGFloat = panelWidth - horizontalInset * 4
+
     static let inputTextWidth: CGFloat = panelWidth - horizontalInset * 2 - inputAccessoryWidth
 
     static let queryFont = NSFont.systemFont(ofSize: 15)

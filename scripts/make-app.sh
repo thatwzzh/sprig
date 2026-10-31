@@ -20,6 +20,11 @@ if [ ! -f assets/logo/Sprig.icns ]; then
 fi
 cp assets/logo/Sprig.icns "$APP/Contents/Resources/AppIcon.icns"
 
+# mermaid 运行时：```mermaid 图在本地渲染，不走网络
+if [ -f assets/vendor/mermaid.min.js ]; then
+  cp assets/vendor/mermaid.min.js "$APP/Contents/Resources/mermaid.min.js"
+fi
+
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

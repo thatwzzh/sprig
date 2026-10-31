@@ -918,14 +918,15 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         for theme in MarkdownTheme.all {
             readingThemePopUp.addItem(withTitle: theme.name)
             readingThemePopUp.lastItem?.representedObject = theme.id
+            readingThemePopUp.lastItem?.toolTip = theme.note.isEmpty ? nil : theme.note
         }
-        if let index = MarkdownTheme.all.firstIndex(where: { $0.id == Settings.readingTheme }) {
+        if let index = MarkdownTheme.all.firstIndex(where: { $0.id == MarkdownTheme.current.id }) {
             readingThemePopUp.selectItem(at: index)
         }
     }
 
     @objc private func readingThemeChanged() {
-        let id = readingThemePopUp.selectedItem?.representedObject as? String ?? MarkdownTheme.default.id
+        let id = readingThemePopUp.selectedItem?.representedObject as? String ?? MarkdownTheme.fallback.id
         Settings.readingTheme = id
         // 让面板立刻按新主题重排
         NotificationCenter.default.post(name: .sprigProvidersDidChange, object: nil)
@@ -992,6 +993,52 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
     }
 
     /// 无界面校验：`Sprig --settings --dump` 打印表单状态后退出
+    /// 把设置页画成 PNG（`rect` 为空时整页）。
+    func snapshot(to url: URL, rect: NSRect? = nil) {
+        guard let view = window?.contentView else { return }
+        view.layoutSubtreeIfNeeded()
+        let target = rect ?? view.bounds
+        guard let rep = view.bitmapImageRepForCachingDisplay(in: target) else { return }
+        // 先铺白底：contentView 本身透明，直接画出来会是全黑
+        NSGraphicsContext.saveGraphicsState()
+        if let context = NSGraphicsContext(bitmapImageRep: rep) {
+            NSGraphicsContext.current = context
+            NSColor.white.setFill()
+            NSRect(origin: .zero, size: target.size).fill()
+        }
+        view.cacheDisplay(in: target, to: rep)
+        NSGraphicsContext.restoreGraphicsState()
+        try? rep.representation(using: .png, properties: [:])?.write(to: url)
+        print("[readme] settings ->", url.lastPathComponent, rep.pixelsWide, "x", rep.pixelsHigh)
+    }
+
+    /// 只截 Agent 那一块：标题行进到工作目录行。
+    func snapshotAgentSection(to url: URL) {
+        guard let view = window?.contentView else { return }
+        // 截图用：统一显示成「握手通过」，否则一排空心圆看着像还没配好
+        for config in Settings.agentConfigs {
+            agentChips.setStatus(.ok(config.displayName), for: config.id)
+        }
+        view.layoutSubtreeIfNeeded()
+        let title = view.subviews.compactMap { $0 as? NSTextField }
+            .first { $0.stringValue == "Agent" }
+        let top = max(title?.frame.maxY ?? agentRescanButton.frame.maxY,
+                      agentRescanButton.frame.maxY)
+        let bottom = min(agentWorkspaceLabel.frame.minY, agentChooseButtonFrame().minY)
+        let rect = NSRect(x: 8,
+                          y: bottom - 12,
+                          width: view.bounds.width - 16,
+                          height: top - bottom + 24)
+        snapshot(to: url, rect: rect)
+    }
+
+    /// 「选择…」是布局里就地建的按钮，按文案找它，拿不到就退回工作目录标签
+    private func agentChooseButtonFrame() -> NSRect {
+        let buttons = window?.contentView?.subviews.compactMap { $0 as? NSButton } ?? []
+        return buttons.first { $0.title == "选择…" && $0.frame.minY < agentWorkspaceLabel.frame.maxY }?.frame
+            ?? agentWorkspaceLabel.frame
+    }
+
     func debugDump() {
         // 先把布局跑一遍，不然量到的都是还没排过的 frame
         window?.contentView?.layoutSubtreeIfNeeded()
@@ -1041,6 +1088,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
               } ?? 0)
         print("agent.dismissed    =", UserDefaults.standard.stringArray(forKey: "dismissedAgentPresets") ?? [])
         print("agent.status       =", agentStatuses.mapValues(\.label))
+        print("themes             =", MarkdownTheme.all.count, MarkdownTheme.all.map(\.name))
         print("buttons            =", ["测试连接": testButton, "同步模型": localSyncButton,
                                           "去获取": webSearchHelpButton, "测试全部": agentTestAllButton]
                 .map { "\($0.key):\(Int($0.value.frame.width))" }
@@ -1091,8 +1139,12 @@ private final class AgentModelPicker: NSObject {
         populate(Settings.cachedModels(for: agentID))
     }
 
+    /// 必须读下拉**当前**选中的那一项：`selected` 只是打开弹窗时的初始值，
+    /// 用它会导致「选了别的模型、保存后又回到 agent 默认」
     var selectedID: String? {
-        popUp.indexOfSelectedItem <= 0 ? nil : selected
+        let index = popUp.indexOfSelectedItem
+        guard index > 0, index - 1 < models.count else { return nil }
+        return models[index - 1].id
     }
 
     var selectedLabel: String? {
@@ -1131,6 +1183,8 @@ private final class AgentModelPicker: NSObject {
     @objc private func reload() {
         let command = commandProvider().trimmingCharacters(in: .whitespacesAndNewlines)
         guard !command.isEmpty, task == nil else { return }
+        // 重新拉清单前先记住当前选择，拉完再按 id 还原
+        selected = selectedID
         reloadButton.isEnabled = false
         popUp.isEnabled = false
         reloadButton.title = "读取中…"
@@ -1164,7 +1218,6 @@ private final class AgentModelPicker: NSObject {
             }
             Settings.setCachedModels(list, for: self.agentID)
             Settings.setCachedOptions(options, for: self.agentID)
-            self.selected = self.selected ?? list.first?.id
             self.populate(list)
         }
     }

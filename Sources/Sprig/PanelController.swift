@@ -7,6 +7,8 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
 
     /// 后台跑失败的卡：错误先存在这里，等用户切回这张卡再显示（不落盘）
     private var backgroundErrors: [UUID: String] = [:]
+    /// 正在画 mermaid 的卡片，避免重复起任务
+    private var diagramJobs: Set<UUID> = []
 
     private struct Node {
         var card: AnswerCard
@@ -103,7 +105,6 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         content.selectionBar.onExplain = { [weak self] in self?.explainSelection() }
 
         content.tree.onSelect = { [weak self] card in self?.navigate(to: card) }
-        content.tree.onClose = { [weak self] in self?.setTreeVisible(false) }
         content.tree.onRename = { [weak self] card, title in self?.commitRename(card, title: title) }
         content.tree.onDelete = { [weak self] card in self?.requestDelete(card) }
 
@@ -506,6 +507,7 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
             self.adoptBackgroundIfNeeded(card.id)
             self.renderCurrent()
             self.content.tree.select(id: card.id)
+            self.prepareMermaidIfNeeded(for: card)
         }
     }
 
@@ -1303,6 +1305,7 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
             stack[stack.count - 1].card = card
             stack[stack.count - 1].raw = card.answer
             renderCurrent()
+            prepareMermaidIfNeeded(for: card)
         }
     }
 
@@ -1441,20 +1444,104 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
 
     /// SPRIG_SNAP_PANEL=/tmp/p.png 时把面板画成图片（调试排版用，不需要屏幕录制权限）
     func dumpSnapshotIfRequested() {
-        guard let path = ProcessInfo.processInfo.environment["SPRIG_SNAP_PANEL"],
-              let view = panel.contentView,
-              let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+        guard let path = ProcessInfo.processInfo.environment["SPRIG_SNAP_PANEL"] else { return }
+        guard let view = panel.contentView else { return }
+        writePNG(view, to: URL(fileURLWithPath: path))
+        print("[panel] snapshot ->", path)
+    }
+
+    /// 把视图画成 PNG。先铺底色：面板/设置的内容视图是透明的，直接画会得到全黑。
+    private func writePNG(_ view: NSView,
+                          to url: URL,
+                          fill: NSColor = .windowBackgroundColor,
+                          rect: NSRect? = nil) {
+        let target = rect ?? view.bounds
+        guard let rep = view.bitmapImageRepForCachingDisplay(in: target) else { return }
         NSGraphicsContext.saveGraphicsState()
         if let context = NSGraphicsContext(bitmapImageRep: rep) {
             NSGraphicsContext.current = context
-            NSColor.windowBackgroundColor.setFill()
-            NSRect(origin: .zero, size: view.bounds.size).fill()
+            fill.setFill()
+            NSRect(origin: .zero, size: target.size).fill()
         }
-        view.cacheDisplay(in: view.bounds, to: rep)
+        view.cacheDisplay(in: target, to: rep)
         NSGraphicsContext.restoreGraphicsState()
-        try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
-        print("[panel] snapshot ->", path)
+        try? rep.representation(using: .png, properties: [:])?.write(to: url)
     }
+
+    /// README 截图：在一个临时空库里造一棵示例树，拍面板。
+    /// 不走真实知识库，所以不会把你自己的卡片拍进去。
+    func debugReadmeShots(into directory: URL) async {
+        // 配图不跟着当前选的主题变，固定用默认那套
+        let originalTheme = Settings.readingTheme
+        Settings.readingTheme = MarkdownTheme.fallback.id
+        defer { Settings.readingTheme = originalTheme }
+
+        let library = directory.appendingPathComponent("library", isDirectory: true)
+        try? FileManager.default.removeItem(at: library)
+        await CardStore.shared.useEmptyLibrary(at: library)
+
+        let root = AnswerCard(title: "RAG",
+                              question: "RAG 是什么？它解决了什么问题？",
+                              answer: Self.demoAnswer)
+        let hallucination = AnswerCard(parentID: root.id,
+                                       title: "幻觉",
+                                       question: "解释「幻觉」",
+                                       answer: "指模型编造看似合理、实际并不存在的内容，"
+                                           + "比如虚构的引用、数字和论文标题。",
+                                       selectedText: "幻觉")
+        let vector = AnswerCard(parentID: root.id,
+                                title: "向量数据库",
+                                question: "解释「向量数据库」",
+                                answer: "把文本转成向量后存起来，按相似度检索。\n\n"
+                                    + "RAG 里的「检索」通常就落在它身上：先找最相近的几段，再交给模型。",
+                                selectedText: "检索")
+        let grounded = AnswerCard(parentID: hallucination.id,
+                                  title: "事实性",
+                                  question: "怎么判断事实性？",
+                                  answer: "看结论有没有出处：能指到原文段落，才算站得住。",
+                                  selectedText: "编造")
+        for card in [root, hallucination, vector, grounded] {
+            await CardStore.shared.upsert(card)
+        }
+
+        show()
+        if !isTreeVisible { setTreeVisible(true) }
+        content.layoutSubtreeIfNeeded()
+
+        stack = [Node(card: root, raw: root.answer, scroll: 0)]
+        renderCurrent()
+        content.tree.reload(currentID: root.id)
+        prepareMermaidIfNeeded(for: root)
+        content.layoutSubtreeIfNeeded()
+
+        // 面板淡入 0.12s、树从库里读卡片、mermaid 渲染都是异步的
+        try? await Task.sleep(nanoseconds: 2_500_000_000)
+        content.layoutSubtreeIfNeeded()
+
+        if let view = panel.contentView {
+            writePNG(view, to: directory.appendingPathComponent("panel.png"))
+            print("[readme] panel ->", view.bounds.size, "px:", Int(view.bounds.width * 2))
+        }
+    }
+
+    private static let demoAnswer = """
+    RAG（⟦检索增强生成⟧）让模型先查资料再回答，而不是只靠参数里的记忆。
+
+    它主要解决三个问题：
+
+    - **知识过期**：资料更新，答案跟着更新，不用重训模型
+    - **幻觉**：每条结论都能追到出处
+    - **私有数据**：企业文档不必进训练集
+
+    ```mermaid
+    flowchart LR
+        A[提问] -->|检索| B[相关片段]
+        B --> C[模型生成]
+        C --> D[带出处的回答]
+    ```
+    """
+
+
 
     /// 报错只留在面板上：写进卡片的话会被 CardStore 顺手同步进 Markdown。
     /// 卡片本身（问题）保留，答案留空，用户可以直接重试。
@@ -1620,7 +1707,32 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         let card = stack[index].card
         Task { await CardStore.shared.upsert(card) }
         prepareHtmlAssets(for: card)
+        prepareMermaidIfNeeded(for: card)
         refreshTreeIfVisible()
+    }
+
+    /// 这张卡里的 ```mermaid 图还没画出来时就后台画，画完重绘。
+    /// 同一张卡同时只跑一个任务，避免切来切去重复渲染。
+    private func prepareMermaidIfNeeded(for card: AnswerCard) {
+        guard !diagramJobs.contains(card.id) else { return }
+        let sources = MarkdownLite.parse(card.answer).compactMap { block -> String? in
+            if case .mermaid(let source) = block.kind { return source }
+            return nil
+        }
+        guard !sources.isEmpty,
+              sources.contains(where: { MermaidSnapshot.cached($0) == nil }) else { return }
+
+        diagramJobs.insert(card.id)
+        Task { @MainActor [weak self] in
+            var changed = false
+            for source in sources where MermaidSnapshot.cached(source) == nil {
+                if await MermaidSnapshot.image(for: source) != nil { changed = true }
+            }
+            guard let self else { return }
+            self.diagramJobs.remove(card.id)
+            guard changed, self.stack.last?.card.id == card.id else { return }
+            self.renderCurrent()
+        }
     }
 
     /// 答案里有 ```html 图块时，把它离屏渲染成 PNG 落到 `<知识库>/assets/`，

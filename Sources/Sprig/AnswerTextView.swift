@@ -7,6 +7,56 @@ import SprigCore
 final class AnswerTextView: NSTextView {
     private var showsPlaceholder = false
 
+    /// 代码块范围标记（值是底色）。不靠 `.backgroundColor` 逐字铺，
+    /// 而是按行片段整段画；颜色存在属性里，绘制时不依赖「当前主题」。
+    static let codeBlockKey = NSAttributedString.Key("sprigCodeBlock")
+
+    /// 行内代码标记（值是底色）。`.backgroundColor` 只贴字形、没有圆角也没有内边距，
+    /// 中文正文里会显得很挤，所以同样自己画。
+    static let inlineCodeKey = NSAttributedString.Key("sprigInlineCode")
+
+    override func draw(_ dirtyRect: NSRect) {
+        drawCodeBlockBackgrounds()
+        drawInlineCodeBackgrounds()
+        super.draw(dirtyRect)
+    }
+
+    /// 整块底色 + 圆角。
+    ///
+    /// 逐字符的 `.backgroundColor` 有两个毛病：只覆盖字形宽度（首行尤其明显，
+    /// 行尾不到右边界），而且没法做圆角。这里按字形范围找到所有行片段，
+    /// 取首尾行片段的上下沿，横跨整个文本容器画一个圆角矩形。
+    private func drawCodeBlockBackgrounds() {
+        guard let storage = textStorage, let layoutManager, let container = textContainer,
+              storage.length > 0 else { return }
+        layoutManager.ensureLayout(for: container)
+        let origin = textContainerOrigin
+
+        storage.enumerateAttribute(Self.codeBlockKey,
+                                   in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+            guard let color = value as? NSColor else { return }
+            let glyphRange = layoutManager.glyphRange(forCharacterRange: range,
+                                                     actualCharacterRange: nil)
+            var top = CGFloat.greatestFiniteMagnitude
+            var bottom = -CGFloat.greatestFiniteMagnitude
+            // 用 used rect 而不是 fragment rect：末行的 fragment 会把段后间距
+            // 一起算进高度（实测 18pt 的行变成 36pt），底色块底下就会多出一整行
+            layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { _, used, _, _, _ in
+                top = min(top, used.minY)
+                bottom = max(bottom, used.maxY)
+            }
+            guard top < bottom else { return }
+
+            // 上下各留 4pt：文字贴着边会显得挤
+            let band = NSRect(x: origin.x,
+                              y: origin.y + top - 4,
+                              width: container.size.width,
+                              height: bottom - top + 8)
+            color.setFill()
+            NSBezierPath(roundedRect: band, xRadius: 6, yRadius: 6).fill()
+        }
+    }
+
     init() {
         let storage = NSTextStorage()
         let layoutManager = NSLayoutManager()
@@ -140,7 +190,7 @@ final class AnswerTextView: NSTextView {
         // 用文本视图的真实可用宽度，别用面板常量——否则宽表/宽图会被右边缘裁掉
         let available = bounds.width > 0
             ? bounds.width - textContainerInset.width * 2
-            : Theme.panelWidth - Theme.horizontalInset * 2
+            : Theme.answerTextWidth
         if case .table(let header, let rows) = block.kind {
             return Self.tableAttachment(header: header, rows: rows, maxWidth: available)
         }
@@ -152,6 +202,19 @@ final class AnswerTextView: NSTextView {
             // 渲染好了就画图；还没好（或渲染失败）先按代码块显示源码，不丢内容
             if let image = HtmlSnapshot.cached(source) { return Self.imageAttachment(image) }
         }
+        if case .mermaid(let source) = block.kind {
+            // 固定按 answerTextWidth 渲染并查找：布局过程中 bounds 会从 1 变到 640，
+            // 拿它当键会导致「明明画好了却查不到」
+            if let image = MermaidSnapshot.cached(source) {
+                return Self.imageAttachment(image)
+            }
+            // 还没渲染好（或拿不到 mermaid 运行时）：显示源码，至少能读
+            return Self.codeBlock(source, language: "mermaid")
+        }
+        if case .code(let language) = block.kind {
+            return Self.codeBlock(block.plainText, language: language)
+        }
+
         var attributes = baseAttributes()
         var prefix = ""
 
@@ -173,28 +236,18 @@ final class AnswerTextView: NSTextView {
         case .quote:
             attributes[.foregroundColor] = MarkdownTheme.current.palette.secondary
             attributes[.paragraphStyle] = Self.indentedParagraph(indent: 10)
-        case .table, .chart, .html:
-            break   // 表格/图表/HTML 在方法开头单独处理
+        case .table, .chart, .html, .mermaid:
+            break   // 表格/图表/HTML/Mermaid 在方法开头单独处理
         case .code:
-            attributes[.font] = MarkdownTheme.current.monoFont
-            attributes[.foregroundColor] = MarkdownTheme.current.palette.codeText
-            attributes[.backgroundColor] = MarkdownTheme.current.palette.codeBackground
-            attributes[.paragraphStyle] = Self.codeParagraph()
+            break   // 在上面的 codeBlock(_:) 里单独处理
         }
 
         var inlineRuns = block.inlines
-        // 末尾补一个换行：最后一段没有换行符时，AppKit 不会给这一行画底色
-        if case .code = block.kind {
-            inlineRuns = block.inlines.map { inline -> MarkdownInline in
-                guard case .text(var value) = inline else { return inline }
-                if !value.hasSuffix("\n") { value += "\n" }
-                return .text(value)
-            }
-        }
         if case .html(let source) = block.kind {
             attributes[.font] = MarkdownTheme.current.monoFont
-            attributes[.backgroundColor] = NSColor.quaternaryLabelColor.withAlphaComponent(0.10)
+            attributes[.foregroundColor] = MarkdownTheme.current.palette.codeText
             attributes[.paragraphStyle] = Self.codeParagraph()
+            attributes[Self.codeBlockKey] = MarkdownTheme.current.palette.codeBackground
             inlineRuns = [.text(source)]
         }
 
@@ -209,8 +262,8 @@ final class AnswerTextView: NSTextView {
             case .code(let value):
                 var code = attributes
                 code[.font] = MarkdownTheme.current.monoFont
-                code[.backgroundColor] = MarkdownTheme.current.palette.inlineCodeBackground
                 code[.foregroundColor] = MarkdownTheme.current.palette.codeText
+                code[Self.inlineCodeKey] = MarkdownTheme.current.palette.inlineCodeBackground
                 result.append(NSAttributedString(string: value, attributes: code))
             case .bold(let value):
                 var bold = attributes
@@ -233,15 +286,65 @@ final class AnswerTextView: NSTextView {
 
     /// 表格画成图片再挂进文本：不用 NSTextTable 那一套（API 难对齐、样式也难控），
     /// 图片参与排版，高度测量自然就对。
+    /// 行内代码：圆角 + 左右 3pt 内边距，垂直按行片段居中。
+    ///
+    /// 内边距不能靠加空格（那会改到可复制的内容），而是把画出来的矩形
+    /// 往两侧各撑 3pt——文字本身没动，底色块看起来就有了呼吸。
+    private func drawInlineCodeBackgrounds() {
+        guard let storage = textStorage, let layoutManager, let container = textContainer,
+              storage.length > 0 else { return }
+        layoutManager.ensureLayout(for: container)
+        let origin = textContainerOrigin
+        let font = MarkdownTheme.current.monoFont
+
+        storage.enumerateAttribute(Self.inlineCodeKey,
+                                   in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+            guard let color = value as? NSColor else { return }
+            let glyphRange = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { lineRect, _, _, lineGlyphs, _ in
+                let overlap = NSIntersectionRange(glyphRange, lineGlyphs)
+                guard overlap.length > 0 else { return }
+                let glyphRect = layoutManager.boundingRect(forGlyphRange: overlap, in: container)
+                let pillHeight = min(lineRect.height - 1, ceil(font.pointSize + 5))
+                // 按字形包围盒居中：行框中线比大写字形中心低 2pt 左右，用它居中文字会显高
+                let pill = NSRect(x: origin.x + glyphRect.minX - 3,
+                                  y: origin.y + glyphRect.midY - pillHeight / 2,
+                                  width: glyphRect.width + 6,
+                                  height: pillHeight)
+                color.setFill()
+                NSBezierPath(roundedRect: pill, xRadius: 3.5, yRadius: 3.5).fill()
+            }
+        }
+    }
+
+    /// 图片块的段落样式：附件没有字体行框，段落间距只能自己带，
+    /// 否则表格/图表会紧贴上一段（代码块尤其明显）
+    private static func figureParagraph() -> NSParagraphStyle {
+        let style = NSMutableParagraphStyle()
+        style.paragraphSpacingBefore = 14
+        style.paragraphSpacing = 10
+        return style
+    }
+
     private static func imageAttachment(_ image: NSImage) -> NSAttributedString {
         let attachment = NSTextAttachment()
         attachment.image = image
         attachment.bounds = NSRect(x: 0, y: 0, width: image.size.width, height: image.size.height)
+        return attachmentString(attachment)
+    }
+
+    /// 附件 + 收尾换行，整段共用同一个段落样式
+    private static func attachmentString(_ attachment: NSTextAttachment) -> NSAttributedString {
+        let style = figureParagraph()
         let result = NSMutableAttributedString(attachment: attachment)
+        if result.length > 0 {
+            result.addAttribute(.paragraphStyle, value: style,
+                                range: NSRange(location: 0, length: result.length))
+        }
         result.append(NSAttributedString(string: "\n", attributes: [
-            .font: Theme.answerFont,
+            .font: MarkdownTheme.current.bodyFont,
             .foregroundColor: NSColor.labelColor,
-            .paragraphStyle: Theme.answerParagraph,
+            .paragraphStyle: style,
         ]))
         return result
     }
@@ -254,13 +357,7 @@ final class AnswerTextView: NSTextView {
         let attachment = NSTextAttachment()
         attachment.image = image
         attachment.bounds = NSRect(x: 0, y: 0, width: image.size.width, height: image.size.height)
-        let result = NSMutableAttributedString(attachment: attachment)
-        result.append(NSAttributedString(string: "\n", attributes: [
-            .font: Theme.answerFont,
-            .foregroundColor: NSColor.labelColor,
-            .paragraphStyle: Theme.answerParagraph,
-        ]))
-        return result
+        return attachmentString(attachment)
     }
 
     private static func indentedParagraph(indent: CGFloat = 18) -> NSParagraphStyle {
@@ -281,16 +378,60 @@ final class AnswerTextView: NSTextView {
         return style
     }
 
-    /// 代码块里每个换行都是一个段落，段距必须归零，否则每行之间都会空一大截
-    private static func codeParagraph() -> NSParagraphStyle {
+    /// 代码块里每个换行都是一个段落，所以段距只能加在首行（before）和末行（after）上，
+    /// 中间的行必须归零，否则每行之间都会空一大截。
+    private static func codeParagraph(before: CGFloat = 0, after: CGFloat = 0) -> NSParagraphStyle {
         let style = NSMutableParagraphStyle()
         style.lineSpacing = 3
-        style.paragraphSpacing = 0
-        style.paragraphSpacingBefore = 0
-        style.paragraphSpacing = 0
+        style.paragraphSpacingBefore = before
+        style.paragraphSpacing = after
         style.headIndent = 10
         style.firstLineHeadIndent = 10
         return style
+    }
+
+    /// 代码块：按语言着色，逐行给样式（首行前间距、末行后间距），
+    /// 整段打上标记由 draw 统一铺底色。
+    private static func codeBlock(_ text: String, language: String) -> NSAttributedString {
+        let theme = MarkdownTheme.current
+        let tokens = CodeHighlighter.tokens(text, language: language)
+        let lineCount = max(1, text.components(separatedBy: "\n").count)
+        var line = 0
+        let result = NSMutableAttributedString()
+
+        func attributes(_ kind: CodeTokenKind) -> [NSAttributedString.Key: Any] {
+            var color = theme.palette.codeText
+            switch kind {
+            case .keyword: color = MarkdownTheme.syntax.keyword
+            case .string: color = MarkdownTheme.syntax.value
+            case .comment: color = MarkdownTheme.syntax.comment
+            case .number: color = MarkdownTheme.syntax.number
+            case .type: color = MarkdownTheme.syntax.type
+            case .plain: break
+            }
+            return [
+                .font: theme.monoFont,
+                .foregroundColor: color,
+                // 行框下方还有几 pt 余量，段后要放大一点，否则底色块贴着下一段
+                .paragraphStyle: codeParagraph(before: line == 0 ? 10 : 0,
+                                              after: line == lineCount - 1 ? 18 : 0),
+                Self.codeBlockKey: theme.palette.codeBackground,
+            ]
+        }
+
+        for token in tokens {
+            let pieces = token.text.components(separatedBy: "\n")
+            for (index, piece) in pieces.enumerated() {
+                if index > 0 {
+                    result.append(NSAttributedString(string: "\n", attributes: attributes(token.kind)))
+                    line += 1
+                }
+                if !piece.isEmpty {
+                    result.append(NSAttributedString(string: piece, attributes: attributes(token.kind)))
+                }
+            }
+        }
+        return result
     }
 
     func scrollToBottom() {

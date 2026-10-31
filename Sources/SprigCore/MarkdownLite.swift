@@ -24,6 +24,8 @@ public enum MarkdownBlockKind: Equatable, Sendable {
     case chart(ChartSpec)
     /// ```html 块：UI 层渲染成图片（流程图/架构图），渲染不了就退回显示源码
     case html(String)
+    /// ```mermaid 块：UI 层渲染成图片，渲染不了就退回带高亮的源码
+    case mermaid(String)
 }
 
 /// 图表数据。模型用 ```sprig-chart 加一段 JSON 描述，知枝负责画。
@@ -112,6 +114,8 @@ public enum MarkdownLite {
             if codeLanguage.lowercased().hasPrefix("sprig-chart"),
                let spec = ChartSpec.parse(body) {
                 blocks.append(MarkdownBlock(kind: .chart(spec), inlines: []))
+            } else if codeLanguage.lowercased() == "mermaid" {
+                blocks.append(MarkdownBlock(kind: .mermaid(body), inlines: []))
             } else if codeLanguage.lowercased() == "html" {
                 blocks.append(MarkdownBlock(kind: .html(body), inlines: []))
             } else {

@@ -63,6 +63,19 @@ public actor CardStore {
         fileURL
     }
 
+    /// 截图/演示用：切到一个空库。
+    ///
+    /// 和 `useDirectory` 的区别是不做「把现有数据复制过去」那套保护——
+    /// 目的恰恰是不要带进真实卡片。
+    public func useEmptyLibrary(at directory: URL) {
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        fileURL = directory.appendingPathComponent(Self.fileName)
+        cards = [:]
+        loaded = true
+        refusePersist = false
+        persist()
+    }
+
     public func upsert(_ card: AnswerCard) {
         loadIfNeeded()
         cards[card.id] = card
