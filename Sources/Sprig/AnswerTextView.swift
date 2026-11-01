@@ -131,6 +131,17 @@ final class AnswerTextView: NSTextView {
         showsPlaceholder = true
     }
 
+    /// 占位期间换文案：让「正在思考…」能变成「正在执行 Bash: ls」
+    func updateThinkingPlaceholder(_ text: String) {
+        guard showsPlaceholder else { return }
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: Theme.answerFont,
+            .foregroundColor: NSColor.tertiaryLabelColor,
+            .paragraphStyle: Theme.answerParagraph,
+        ]
+        textStorage?.setAttributedString(NSAttributedString(string: text, attributes: attributes))
+    }
+
     func clearThinkingPlaceholder() {
         guard showsPlaceholder else { return }
         showsPlaceholder = false

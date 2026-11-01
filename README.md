@@ -323,6 +323,9 @@ defaults write com.catking.sprig.app acpHostPath -string "$HOME/code/acp-host/ta
 关掉就把 `useAcpHost` 写回 `false`。不填路径时按 `~/code/acp-host/target/release/`、`/usr/local/bin`、
 `/opt/homebrew/bin` 依次找。
 
+**等待期反馈**：模型的思考片段和工具调用会显示在「正在思考…」那一行（如 `Bash: ls`），
+首字到达后自动让位给正文。
+
 **速度**：daemon 常驻 + 启动预热后，同一进程内的第二问起首字约 2.6 秒；
 冷启动（每次重起 node CLI）约 14 秒，差别主要在模型连接和 CLI 启动，所以别每次提问都重起。
 

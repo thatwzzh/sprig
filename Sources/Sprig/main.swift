@@ -67,6 +67,19 @@ if let index = CommandLine.arguments.firstIndex(of: "--headless"), index + 1 < C
     exit(0)
 }
 
+// 让 daemon 列出本机装了哪些 agent
+if CommandLine.arguments.contains("--host-agents") {
+    let semaphore = DispatchSemaphore(value: 0)
+    Task {
+        let agents = await AcpHostClient.shared.detectAgents()
+        for agent in agents { print("\(agent.id)\t\(agent.name)\t\(agent.command.prefix(80))") }
+        print("共 \(agents.count) 个")
+        semaphore.signal()
+    }
+    semaphore.wait()
+    exit(0)
+}
+
 // 走 acp-host 守护进程跑一轮，验证 daemon 链路（不经过 UI）
 if let index = CommandLine.arguments.firstIndex(of: "--acp-host-probe"),
    index + 1 < CommandLine.arguments.count {
@@ -105,6 +118,19 @@ if let index = CommandLine.arguments.firstIndex(of: "--acp-host-probe"),
                 break
             }
         }
+        semaphore.signal()
+    }
+    semaphore.wait()
+    exit(0)
+}
+
+// 让 daemon 列出本机装了哪些 agent
+if CommandLine.arguments.contains("--host-agents") {
+    let semaphore = DispatchSemaphore(value: 0)
+    Task {
+        let agents = await AcpHostClient.shared.detectAgents()
+        for agent in agents { print("\(agent.id)\t\(agent.name)\t\(agent.command.prefix(80))") }
+        print("共 \(agents.count) 个")
         semaphore.signal()
     }
     semaphore.wait()

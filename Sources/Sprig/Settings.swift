@@ -110,9 +110,24 @@ enum Settings {
         set { UserDefaults.standard.set(newValue, forKey: "useAcpHost") }
     }
 
+    /// 把 acp-host 检测到的 agent 并进接入列表（已有的按 presetID 去重）
+    static func mergeDetectedAgents(_ detected: [(id: String, name: String, command: String)]) {
+        var configs = agentConfigs
+        let known = Set(configs.compactMap(\.presetID))
+        var changed = false
+        for agent in detected where !known.contains(agent.id) {
+            configs.append(AgentConfig(name: agent.name, command: agent.command, presetID: agent.id))
+            changed = true
+        }
+        if changed { agentConfigs = configs }
+    }
+
     /// 启动时顺便把模型连接焐热（多发一句极短请求，消耗一点点额度）
     static var warmModelOnLaunch: Bool {
-        get { UserDefaults.standard.bool(forKey: "warmModelOnLaunch") }
+        get {
+            // 默认开：没写过这个键就当作 true
+            UserDefaults.standard.object(forKey: "warmModelOnLaunch") as? Bool ?? true
+        }
         set { UserDefaults.standard.set(newValue, forKey: "warmModelOnLaunch") }
     }
 

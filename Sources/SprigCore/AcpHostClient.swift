@@ -47,11 +47,40 @@ public actor AcpHostClient {
         daemon.close(session: session)
     }
 
+    /// 让守护进程列出本机真的装了的 agent（预设和探测规则都在它那边）
+    public func detectAgents() async -> [(id: String, name: String, command: String)] {
+        guard let binary = Self.locateBinary() else { return [] }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: binary)
+        var env = ProcessInfo.processInfo.environment
+        env["PATH"] = AcpEnvironment.searchPath()
+        process.environment = env
+        let input = Pipe(), output = Pipe()
+        process.standardInput = input
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return [] }
+        defer { if process.isRunning { process.terminate() } }
+
+        input.fileHandleForWriting.write(Data("{\"id\":\"1\",\"method\":\"agents.detect\"}\n".utf8))
+        let data = output.fileHandleForReading.availableData
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let result = object["result"] as? [String: Any],
+              let agents = result["agents"] as? [[String: Any]] else { return [] }
+        return agents.compactMap { agent in
+            guard let id = agent["id"] as? String,
+                  let name = agent["name"] as? String,
+                  let command = agent["command"] as? String else { return nil }
+            return (id, name, command)
+        }
+    }
+
     /// 一轮对话产出的文本块（和 `AcpClient.ask` 同形，方便上层替换）
     public func ask(text: String,
                     agent: String,
                     cwd: String,
                     timeout: TimeInterval = 180,
+                    onActivity: (@Sendable (String) -> Void)? = nil,
                     permission: @escaping @Sendable (AcpPermissionAsk) async -> AcpPermissionOutcome)
         -> AsyncThrowingStream<String, Error>
     {
@@ -60,6 +89,7 @@ public actor AcpHostClient {
                 do {
                     try await self.run(text: text, agent: agent, cwd: cwd,
                                        timeout: timeout, permission: permission,
+                                       activity: onActivity,
                                        yield: { outer.yield($0) })
                     outer.finish()
                 } catch {
@@ -77,6 +107,7 @@ public actor AcpHostClient {
                      cwd: String,
                      timeout: TimeInterval,
                      permission: @escaping @Sendable (AcpPermissionAsk) async -> AcpPermissionOutcome,
+                     activity: (@Sendable (String) -> Void)?,
                      yield: @escaping (String) -> Void) async throws
     {
         let daemon = try ensureDaemon()
@@ -106,6 +137,16 @@ public actor AcpHostClient {
                 }
             case "text":
                 if let text = event["text"] as? String, !text.isEmpty { yield(text) }
+
+            // 等待期的反馈：模型在想什么、打算跑什么工具
+            case "thought":
+                if let text = event["text"] as? String, !text.isEmpty {
+                    activity?(String(text.prefix(60)))
+                }
+            case "tool":
+                let title = event["title"] as? String ?? "工具调用"
+                let status = event["status"] as? String ?? ""
+                activity?(status.isEmpty ? title : "\(title)（\(status)）")
             case "permission":
                 let request = event["request"] as? String ?? ""
                 let title = event["title"] as? String ?? "请求权限"

@@ -1157,12 +1157,22 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
             guard let self else { return }
             let stream = await AcpHostClient.shared.ask(
                 text: text, agent: agent, cwd: cwd,
+                onActivity: { line in
+                    Task { @MainActor in
+                        PanelController.shared.answerView.updateThinkingPlaceholder(line)
+                    }
+                },
                 permission: { ask in
                     await PanelController.shared.requestPermission(ask)
                 })
+            var gotText = false
             do {
                 for try await chunk in stream {
                     if Task.isCancelled { return }
+                    if !gotText {
+                        gotText = true
+                        self.answerView.clearThinkingPlaceholder()
+                    }
                     self.consume(chunk, owner: ownerID)
                 }
                 if Task.isCancelled { return }

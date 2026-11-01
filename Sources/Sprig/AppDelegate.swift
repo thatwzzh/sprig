@@ -51,6 +51,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let warmModel = Settings.warmModelOnLaunch
             Task.detached(priority: .utility) {
                 await AcpHostClient.shared.prewarm(agent: agent, cwd: cwd, warmModel: warmModel)
+                // 接入列表以守护进程的探测结果为准（新增 agent 只改 daemon 一处）
+                let detected = await AcpHostClient.shared.detectAgents()
+                if !detected.isEmpty {
+                    await MainActor.run { Settings.mergeDetectedAgents(detected) }
+                }
             }
         }
 
