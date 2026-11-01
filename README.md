@@ -312,7 +312,7 @@ SPRIG_BUNDLE_ID=com.catking.sprig.dev ./scripts/make-app.sh
 
 ### 走 acp-host 守护进程
 
-agent 的协议细节（登录、换模型、各家脾气）可以交给外部守护进程 [`acp-host`](https://github.com/)，
+agent 的协议细节（登录、换模型、各家脾气）可以交给外部守护进程 [`acp-host`](https://github.com/thatwzzh/acp-host)，
 app 这层只收文本。默认关，切过去：
 
 ```bash
