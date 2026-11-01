@@ -400,7 +400,9 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         return min(46, max(22, ceil(rect.height) + 8))
     }
 
-    private func applyHeights(animated: Bool) {
+    /// - Parameter resize: false 时只排内部视图，不动面板尺寸。
+    ///   用户向上翻看时用它，避免窗口一直长高把可视区域顶得乱跳。
+    private func applyHeights(animated: Bool, resize: Bool = true) {
         content.setHeights(input: inputHeight,
                            answer: answerHeight,
                            question: questionHeight,
@@ -421,6 +423,8 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
                                   width: answerWidth,
                                   height: max(answerView.frame.height, Theme.answerMinHeight))
         answerView.syncHeightToContent()
+
+        guard resize else { return }
 
         let answerBlock = answerHeight > 0
             ? Theme.breadcrumbHeight + questionHeight + 1 + answerHeight + 1 + bottomHeight
@@ -1484,9 +1488,10 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         pendingSegments.removeAll()
 
         answerView.clearThinkingPlaceholder()
-        // 流式期间也按 Markdown 重画全文：否则用户会先看到 ** 和 ```，收尾才变排版。
-        // 每次 flush 是一次全量解析，答案量级（几千字）下开销可以忽略。
-        if let raw = stack.last?.raw, !raw.isEmpty {
+        let follow = answerView.isScrolledToBottom
+        // 贴着底部时按 Markdown 重画全文（否则会先看到 ** 和 ```）。
+        // 用户翻上去看历史时改成纯追加：整篇重排会让上面的行重新折行，看着就是在跳。
+        if follow, let raw = stack.last?.raw, !raw.isEmpty {
             answerView.renderRich(raw)
         } else {
             for segment in segments { apply(segment) }
@@ -1497,8 +1502,8 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         // 收尾时（finishStreaming）再按实际测量值修正。
         let measured = measuredAnswerHeight()
         answerHeight = isStreaming ? max(measured, answerHeight) : measured
-        applyHeights(animated: false)
-        answerView.scrollToBottom()
+        applyHeights(animated: false, resize: follow)
+        if follow { answerView.scrollToBottom() }
     }
 
     /// 搜索结果展示成「标题 + 域名」，标题可点。纯文本同时写进 raw，重开卡片还在。

@@ -445,6 +445,14 @@ final class AnswerTextView: NSTextView {
         return result
     }
 
+    /// 用户是不是还停在底部。只有停在底部时才跟着新内容滚，
+    /// 否则向上翻看时会被拽回去（表现为上下反复跳动）。
+    var isScrolledToBottom: Bool {
+        guard let scrollView = enclosingScrollView else { return true }
+        let distance = frame.height - (scrollView.contentView.bounds.origin.y + scrollView.contentSize.height)
+        return distance < 24
+    }
+
     func scrollToBottom() {
         guard let scrollView = enclosingScrollView else { return }
         let documentHeight = frame.height
