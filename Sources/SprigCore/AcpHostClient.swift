@@ -7,6 +7,9 @@ import Foundation
 public actor AcpHostClient {
     public static let shared = AcpHostClient()
 
+    /// 常驻的守护进程：每问一次都重起 node CLI 要多花 1~2 秒，这里复用
+    private var daemon: (process: Process, input: Pipe, output: Pipe)?
+
     /// 守护进程路径：设置里优先（直接读 UserDefaults，Core 不依赖 app 层的 Settings），
     /// 其次是仓库里的构建产物和 PATH。
     public static func locateBinary(configured: String? = nil) -> String? {
@@ -46,6 +49,27 @@ public actor AcpHostClient {
         }
     }
 
+    /// 启动时预热：把守护进程和会话先建起来，第一问不用再等冷启动
+    public func prewarm(agent: String, cwd: String) async {
+        guard let (input, output, _) = try? ensureDaemon() else { return }
+        let lines = LineFeed(handle: output.fileHandleForReading)
+        defer { lines.stop() }
+
+        let payload: [String: Any] = ["id": "1", "method": "session.start",
+                                      "params": ["agent": agent, "cwd": cwd]]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return }
+        input.fileHandleForWriting.write(data)
+        input.fileHandleForWriting.write(Data([0x0A]))
+
+        let deadline = Date().addingTimeInterval(20)
+        for await line in lines.stream {
+            if Date() > deadline { break }
+            guard let raw = line.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: raw) as? [String: Any] else { continue }
+            if object["event"] as? String == "ready" { return }
+        }
+    }
+
     // MARK: - 一轮对话
 
     private func run(text: String,
@@ -55,24 +79,8 @@ public actor AcpHostClient {
                      permission: @escaping @Sendable (AcpPermissionAsk) async -> AcpPermissionOutcome,
                      yield: @escaping (String) -> Void) async throws
     {
-        guard let binary = Self.locateBinary() else {
-            throw AcpError.launch("找不到 acp-host。设置里填它的路径，或先在 acp-host 里 cargo build --release。")
-        }
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: binary)
-        var environment = ProcessInfo.processInfo.environment
-        environment["PATH"] = AcpEnvironment.searchPath()
-        process.environment = environment
-
-        let input = Pipe()
-        let output = Pipe()
-        process.standardInput = input
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-
-        try process.run()
-        defer { if process.isRunning { process.terminate() } }
+        let (input, output, process) = try ensureDaemon()
+        defer { /* 进程常驻，不在这里收尾 */ }
 
         let writer = input.fileHandleForWriting
         let session = "s1"
@@ -95,10 +103,7 @@ public actor AcpHostClient {
         var prompted = false
 
         for await line in lines.stream {
-            if Task.isCancelled {
-                send(["id": "9", "method": "shutdown"])
-                return
-            }
+            if Task.isCancelled { return }
             if Date() > deadline {
                 throw AcpError.agent("agent 超过 \(Int(timeout)) 秒没有结束。")
             }
@@ -127,16 +132,16 @@ public actor AcpHostClient {
                 let ask = AcpPermissionAsk(sessionId: session, title: title, detail: "", options: options)
                 Task {
                     let outcome = await permission(ask)
-                    let decision: String
+                    let option: String
                     switch outcome {
-                    case .selected(let option): decision = option == "deny" ? "deny" : "allow"
-                    case .cancelled: decision = "deny"
+                    case .selected(let chosen): option = chosen
+                    case .cancelled: option = "reject"
                     }
+                    // 原样回传 optionId，"总是允许"才生效
                     send(["id": "3", "method": "permission",
-                          "params": ["session": session, "request": request, "decision": decision]])
+                          "params": ["session": session, "request": request, "option": option]])
                 }
             case "done":
-                send(["id": "9", "method": "shutdown"])
                 return
             case "error":
                 let message = object["message"].map { "\($0)" } ?? "未知错误"
@@ -146,9 +151,43 @@ public actor AcpHostClient {
             }
         }
 
-        // 进程结束但没收到 done
+        // 进程没了但没收到 done：下次提问重起
+        stopDaemon()
         if Task.isCancelled { return }
         throw AcpError.launch("acp-host 提前退出了。")
+    }
+}
+
+private extension AcpHostClient {
+    func ensureDaemon() throws -> (Pipe, Pipe, Process) {
+        if let daemon, daemon.process.isRunning {
+            return (daemon.input, daemon.output, daemon.process)
+        }
+        guard let binary = Self.locateBinary() else {
+            throw AcpError.launch("找不到 acp-host。设置里填它的路径，或先在 acp-host 里 cargo build --release。")
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: binary)
+        var environment = ProcessInfo.processInfo.environment
+        environment["PATH"] = AcpEnvironment.searchPath()
+        process.environment = environment
+
+        let input = Pipe()
+        let output = Pipe()
+        process.standardInput = input
+        process.standardOutput = output
+        // 排查时把子进程 stderr 透出来（ACP_HOST_TRACE=1）
+        process.standardError = ProcessInfo.processInfo.environment["ACP_HOST_TRACE"] != nil
+            ? FileHandle.standardError : FileHandle.nullDevice
+
+        try process.run()
+        daemon = (process, input, output)
+        return (input, output, process)
+    }
+
+    func stopDaemon() {
+        if let daemon, daemon.process.isRunning { daemon.process.terminate() }
+        daemon = nil
     }
 }
 

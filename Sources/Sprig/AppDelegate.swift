@@ -44,6 +44,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupMainMenu()
         setupStatusItem()
 
+        // 走 daemon 时先把会话暖起来：第一问的冷启动（十几秒）挪到启动阶段
+        if Settings.useAcpHost {
+            let agent = Settings.activeAgent?.presetID ?? "workbuddy"
+            let cwd = Settings.acpWorkspacePath
+            Task.detached(priority: .utility) {
+                await AcpHostClient.shared.prewarm(agent: agent, cwd: cwd)
+            }
+        }
+
         if CommandLine.arguments.contains("--status-trace") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
                 let item = self?.statusItem

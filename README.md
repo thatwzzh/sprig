@@ -323,6 +323,12 @@ defaults write com.catking.sprig.app acpHostPath -string "$HOME/code/acp-host/ta
 关掉就把 `useAcpHost` 写回 `false`。不填路径时按 `~/code/acp-host/target/release/`、`/usr/local/bin`、
 `/opt/homebrew/bin` 依次找。
 
+**速度**：daemon 常驻 + 启动预热后，同一进程内的第二问起首字约 2.6 秒；
+冷启动（每次重起 node CLI）约 14 秒，差别主要在模型连接和 CLI 启动，所以别每次提问都重起。
+
+**权限**：agent 要跑命令时确实会请求授权（标题现在会写成 `Bash: ls` 这种）。
+在弹窗里选「Always Allow」会生效；想完全免打扰可以用 CLI 的 `--dangerously-skip-permissions`（有风险）。
+
 无界面验证这一条链路：
 
 ```bash

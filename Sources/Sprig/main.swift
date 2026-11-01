@@ -39,7 +39,9 @@ if CommandLine.arguments.contains("--headless-child") {
 }
 
 if let index = CommandLine.arguments.firstIndex(of: "--headless"), index + 1 < CommandLine.arguments.count {
-    let question = CommandLine.arguments[index + 1]
+    // 后面所有参数都当作问题，方便一次量多轮的耗时
+    let questions = Array(CommandLine.arguments[(index + 1)...])
+    let question = questions[0]
     let semaphore = DispatchSemaphore(value: 0)
 
     Task {
@@ -68,7 +70,9 @@ if let index = CommandLine.arguments.firstIndex(of: "--headless"), index + 1 < C
 // 走 acp-host 守护进程跑一轮，验证 daemon 链路（不经过 UI）
 if let index = CommandLine.arguments.firstIndex(of: "--acp-host-probe"),
    index + 1 < CommandLine.arguments.count {
-    let question = CommandLine.arguments[index + 1]
+    // 后面所有参数都当作问题，方便一次量多轮的耗时
+    let questions = Array(CommandLine.arguments[(index + 1)...])
+    let question = questions[0]
     let agent = CommandLine.arguments.firstIndex(of: "--agent").flatMap { i -> String? in
         i + 1 < CommandLine.arguments.count ? CommandLine.arguments[i + 1] : nil
     } ?? "workbuddy"
@@ -77,11 +81,29 @@ if let index = CommandLine.arguments.firstIndex(of: "--acp-host-probe"),
         let cwd = Settings.acpWorkspacePath
         let stream = await AcpHostClient.shared.ask(text: question, agent: agent, cwd: cwd,
                                                     permission: { _ in .selected("allow") })
-        do {
-            for try await chunk in stream { print(chunk, terminator: "") }
-            print("")
-        } catch {
-            print("ERROR: \(error.localizedDescription)")
+        if CommandLine.arguments.contains("--prewarm") {
+            await AcpHostClient.shared.prewarm(agent: agent, cwd: cwd)
+        }
+        var first = true
+        for question in questions {
+            let started = Date()
+            var firstChar: Date?
+            let stream = await AcpHostClient.shared.ask(text: question, agent: agent, cwd: cwd,
+                                                        permission: { _ in .selected("allow") })
+            do {
+                for try await chunk in stream {
+                    if firstChar == nil { firstChar = Date() }
+                    print(chunk, terminator: "")
+                }
+                print("")
+                let head = firstChar.map { String(format: "%.2f", $0.timeIntervalSince(started)) } ?? "-"
+                let total = String(format: "%.2f", Date().timeIntervalSince(started))
+                print("[\(first ? "冷" : "热")] 首字 \(head)s  总计 \(total)s")
+                first = false
+            } catch {
+                print("ERROR: \(error.localizedDescription)")
+                break
+            }
         }
         semaphore.signal()
     }
@@ -92,7 +114,9 @@ if let index = CommandLine.arguments.firstIndex(of: "--acp-host-probe"),
 // 走 acp-host 守护进程跑一轮，验证 daemon 链路（不经过 UI）
 if let index = CommandLine.arguments.firstIndex(of: "--acp-host-probe"),
    index + 1 < CommandLine.arguments.count {
-    let question = CommandLine.arguments[index + 1]
+    // 后面所有参数都当作问题，方便一次量多轮的耗时
+    let questions = Array(CommandLine.arguments[(index + 1)...])
+    let question = questions[0]
     let agent = CommandLine.arguments.firstIndex(of: "--agent").flatMap { i -> String? in
         i + 1 < CommandLine.arguments.count ? CommandLine.arguments[i + 1] : nil
     } ?? "workbuddy"
@@ -101,11 +125,29 @@ if let index = CommandLine.arguments.firstIndex(of: "--acp-host-probe"),
         let cwd = Settings.acpWorkspacePath
         let stream = await AcpHostClient.shared.ask(text: question, agent: agent, cwd: cwd,
                                                     permission: { _ in .selected("allow") })
-        do {
-            for try await chunk in stream { print(chunk, terminator: "") }
-            print("")
-        } catch {
-            print("ERROR: \(error.localizedDescription)")
+        if CommandLine.arguments.contains("--prewarm") {
+            await AcpHostClient.shared.prewarm(agent: agent, cwd: cwd)
+        }
+        var first = true
+        for question in questions {
+            let started = Date()
+            var firstChar: Date?
+            let stream = await AcpHostClient.shared.ask(text: question, agent: agent, cwd: cwd,
+                                                        permission: { _ in .selected("allow") })
+            do {
+                for try await chunk in stream {
+                    if firstChar == nil { firstChar = Date() }
+                    print(chunk, terminator: "")
+                }
+                print("")
+                let head = firstChar.map { String(format: "%.2f", $0.timeIntervalSince(started)) } ?? "-"
+                let total = String(format: "%.2f", Date().timeIntervalSince(started))
+                print("[\(first ? "冷" : "热")] 首字 \(head)s  总计 \(total)s")
+                first = false
+            } catch {
+                print("ERROR: \(error.localizedDescription)")
+                break
+            }
         }
         semaphore.signal()
     }
