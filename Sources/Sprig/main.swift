@@ -65,6 +65,54 @@ if let index = CommandLine.arguments.firstIndex(of: "--headless"), index + 1 < C
     exit(0)
 }
 
+// 走 acp-host 守护进程跑一轮，验证 daemon 链路（不经过 UI）
+if let index = CommandLine.arguments.firstIndex(of: "--acp-host-probe"),
+   index + 1 < CommandLine.arguments.count {
+    let question = CommandLine.arguments[index + 1]
+    let agent = CommandLine.arguments.firstIndex(of: "--agent").flatMap { i -> String? in
+        i + 1 < CommandLine.arguments.count ? CommandLine.arguments[i + 1] : nil
+    } ?? "workbuddy"
+    let semaphore = DispatchSemaphore(value: 0)
+    Task {
+        let cwd = Settings.acpWorkspacePath
+        let stream = await AcpHostClient.shared.ask(text: question, agent: agent, cwd: cwd,
+                                                    permission: { _ in .selected("allow") })
+        do {
+            for try await chunk in stream { print(chunk, terminator: "") }
+            print("")
+        } catch {
+            print("ERROR: \(error.localizedDescription)")
+        }
+        semaphore.signal()
+    }
+    semaphore.wait()
+    exit(0)
+}
+
+// 走 acp-host 守护进程跑一轮，验证 daemon 链路（不经过 UI）
+if let index = CommandLine.arguments.firstIndex(of: "--acp-host-probe"),
+   index + 1 < CommandLine.arguments.count {
+    let question = CommandLine.arguments[index + 1]
+    let agent = CommandLine.arguments.firstIndex(of: "--agent").flatMap { i -> String? in
+        i + 1 < CommandLine.arguments.count ? CommandLine.arguments[i + 1] : nil
+    } ?? "workbuddy"
+    let semaphore = DispatchSemaphore(value: 0)
+    Task {
+        let cwd = Settings.acpWorkspacePath
+        let stream = await AcpHostClient.shared.ask(text: question, agent: agent, cwd: cwd,
+                                                    permission: { _ in .selected("allow") })
+        do {
+            for try await chunk in stream { print(chunk, terminator: "") }
+            print("")
+        } catch {
+            print("ERROR: \(error.localizedDescription)")
+        }
+        semaphore.signal()
+    }
+    semaphore.wait()
+    exit(0)
+}
+
 MainActor.assumeIsolated {
     let app = NSApplication.shared
     let delegate = AppDelegate()

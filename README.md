@@ -310,6 +310,25 @@ gh release create v0.2.1 build/Sprig-v0.2.1.zip --title "知枝 v0.2.1" --notes 
 SPRIG_BUNDLE_ID=com.catking.sprig.dev ./scripts/make-app.sh
 ```
 
+### 走 acp-host 守护进程
+
+agent 的协议细节（登录、换模型、各家脾气）可以交给外部守护进程 [`acp-host`](https://github.com/)，
+app 这层只收文本。默认关，切过去：
+
+```bash
+defaults write com.catking.sprig.app useAcpHost -bool true
+defaults write com.catking.sprig.app acpHostPath -string "$HOME/code/acp-host/target/release/acp-host"
+```
+
+关掉就把 `useAcpHost` 写回 `false`。不填路径时按 `~/code/acp-host/target/release/`、`/usr/local/bin`、
+`/opt/homebrew/bin` 依次找。
+
+无界面验证这一条链路：
+
+```bash
+Sprig --acp-host-probe "用一句话说明你是谁" --agent workbuddy
+```
+
 ### 演示入口
 
 给录屏用的脚本化演示，**不需要任何系统权限**（不像模拟按键要辅助功能）：

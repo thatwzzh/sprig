@@ -1106,6 +1106,12 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         pendingSegments.removeAll()
         seenTerms.removeAll()
 
+        // 走守护进程：登录、模型、各家脾气都交给 acp-host，这里只收文本
+        if Settings.useAcpHost {
+            startAcpHostStreaming(text: text, owner: owner)
+            return
+        }
+
         let prompt = text + AcpCodec.termHint
         let command = Settings.acpCommand
         let cwd = Settings.acpWorkspacePath
@@ -1127,6 +1133,33 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
                     NSWorkspace.shared.open(url)
                 }
             })
+            do {
+                for try await chunk in stream {
+                    if Task.isCancelled { return }
+                    self.consume(chunk, owner: ownerID)
+                }
+                if Task.isCancelled { return }
+                self.finish(owner: ownerID)
+            } catch {
+                if Task.isCancelled { return }
+                self.fail(owner: ownerID, error: error)
+            }
+        }
+    }
+
+    /// 通过 acp-host 守护进程跑一轮。事件形状和 AcpClient 一致，上层不用改。
+    private func startAcpHostStreaming(text: String, owner: UUID) {
+        let agent = Settings.activeAgent?.presetID ?? "workbuddy"
+        let cwd = Settings.acpWorkspacePath
+        let ownerID = owner
+
+        streamTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let stream = await AcpHostClient.shared.ask(
+                text: text, agent: agent, cwd: cwd,
+                permission: { ask in
+                    await PanelController.shared.requestPermission(ask)
+                })
             do {
                 for try await chunk in stream {
                     if Task.isCancelled { return }

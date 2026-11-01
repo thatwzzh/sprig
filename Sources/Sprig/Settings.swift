@@ -104,6 +104,18 @@ enum Settings {
 
     private static let readingThemeKey = "readingTheme"
 
+    /// 是否走 acp-host 守护进程。默认关，验证稳定后再切默认。
+    static var useAcpHost: Bool {
+        get { UserDefaults.standard.bool(forKey: "useAcpHost") }
+        set { UserDefaults.standard.set(newValue, forKey: "useAcpHost") }
+    }
+
+    /// acp-host 可执行文件路径；空表示自动找（仓库构建产物 / PATH）
+    static var acpHostPath: String {
+        get { UserDefaults.standard.string(forKey: "acpHostPath") ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: "acpHostPath") }
+    }
+
     /// 答案区阅读主题。默认 GitHub；旧版本存过 `default`，那个选项已下线，一并回落到 GitHub。
     static var readingTheme: String {
         get {
