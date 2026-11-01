@@ -110,6 +110,18 @@ enum Settings {
         set { UserDefaults.standard.set(newValue, forKey: "useAcpHost") }
     }
 
+    /// 启动时顺便把模型连接焐热（多发一句极短请求，消耗一点点额度）
+    static var warmModelOnLaunch: Bool {
+        get { UserDefaults.standard.bool(forKey: "warmModelOnLaunch") }
+        set { UserDefaults.standard.set(newValue, forKey: "warmModelOnLaunch") }
+    }
+
+    /// 让 agent 跳过权限询问（高危操作仍会问）
+    static var skipAgentPermissions: Bool {
+        get { UserDefaults.standard.bool(forKey: "skipAgentPermissions") }
+        set { UserDefaults.standard.set(newValue, forKey: "skipAgentPermissions") }
+    }
+
     /// acp-host 可执行文件路径；空表示自动找（仓库构建产物 / PATH）
     static var acpHostPath: String {
         get { UserDefaults.standard.string(forKey: "acpHostPath") ?? "" }

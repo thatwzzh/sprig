@@ -4,26 +4,47 @@ import Foundation
 ///
 /// 和 `AcpClient` 的区别：这里不碰 ACP 协议本身，只跟一个子进程收发**一行一个 JSON**。
 /// 登录、换模型、各家 agent 的脾气都收在守护进程里，app 这层不用再跟着协议改。
+///
+/// 关键点：守护进程**常驻**，而且**所有会话共用一条读取线程**。
+/// 早先每个提问各建一个 readabilityHandler，第二个问题会把第一个的回调顶掉，
+/// 结果旧答案画到新卡片上——现在按 `session` 字段分流。
 public actor AcpHostClient {
     public static let shared = AcpHostClient()
 
-    /// 常驻的守护进程：每问一次都重起 node CLI 要多花 1~2 秒，这里复用
-    private var daemon: (process: Process, input: Pipe, output: Pipe)?
+    private var daemon: Daemon?
+    private var nextSession = 0
 
-    /// 守护进程路径：设置里优先（直接读 UserDefaults，Core 不依赖 app 层的 Settings），
-    /// 其次是仓库里的构建产物和 PATH。
-    public static func locateBinary(configured: String? = nil) -> String? {
-        let configured = configured ?? (UserDefaults.standard.string(forKey: "acpHostPath") ?? "")
-        if !configured.isEmpty, FileManager.default.isExecutableFile(atPath: configured) {
-            return configured
+    /// 启动时预热：把守护进程和会话先建起来。
+    /// - Parameter warmModel: 顺便发一句极短的请求，把模型连接也焐热（会消耗一次极小额度）
+    public func prewarm(agent: String, cwd: String, warmModel: Bool = false) async {
+        guard let daemon = try? ensureDaemon() else { return }
+        let session = allocateSession()
+        let stream = daemon.open(session: session)
+
+        daemon.send(["id": "1", "method": "session.start",
+                     "params": ["agent": agent, "cwd": cwd]])
+
+        let deadline = Date().addingTimeInterval(30)
+        var prompted = false
+        for await line in stream {
+            if Date() > deadline { break }
+            guard let event = Self.event(from: line) else { continue }
+            switch event["event"] as? String {
+            case "ready":
+                guard warmModel else { daemon.close(session: session); return }
+                if !prompted {
+                    prompted = true
+                    daemon.send(["id": "2", "method": "session.prompt",
+                                 "params": ["session": session, "text": "ok"]])
+                }
+            case "done", "error":
+                daemon.close(session: session)
+                return
+            default:
+                continue
+            }
         }
-        let home = NSHomeDirectory()
-        let candidates = [
-            "\(home)/code/acp-host/target/release/acp-host",
-            "/usr/local/bin/acp-host",
-            "/opt/homebrew/bin/acp-host",
-        ]
-        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+        daemon.close(session: session)
     }
 
     /// 一轮对话产出的文本块（和 `AcpClient.ask` 同形，方便上层替换）
@@ -34,39 +55,18 @@ public actor AcpHostClient {
                     permission: @escaping @Sendable (AcpPermissionAsk) async -> AcpPermissionOutcome)
         -> AsyncThrowingStream<String, Error>
     {
-        AsyncThrowingStream { continuation in
+        AsyncThrowingStream { outer in
             let task = Task {
                 do {
                     try await self.run(text: text, agent: agent, cwd: cwd,
                                        timeout: timeout, permission: permission,
-                                       yield: { continuation.yield($0) })
-                    continuation.finish()
+                                       yield: { outer.yield($0) })
+                    outer.finish()
                 } catch {
-                    continuation.finish(throwing: error)
+                    outer.finish(throwing: error)
                 }
             }
-            continuation.onTermination = { @Sendable _ in task.cancel() }
-        }
-    }
-
-    /// 启动时预热：把守护进程和会话先建起来，第一问不用再等冷启动
-    public func prewarm(agent: String, cwd: String) async {
-        guard let (input, output, _) = try? ensureDaemon() else { return }
-        let lines = LineFeed(handle: output.fileHandleForReading)
-        defer { lines.stop() }
-
-        let payload: [String: Any] = ["id": "1", "method": "session.start",
-                                      "params": ["agent": agent, "cwd": cwd]]
-        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return }
-        input.fileHandleForWriting.write(data)
-        input.fileHandleForWriting.write(Data([0x0A]))
-
-        let deadline = Date().addingTimeInterval(20)
-        for await line in lines.stream {
-            if Date() > deadline { break }
-            guard let raw = line.data(using: .utf8),
-                  let object = try? JSONSerialization.jsonObject(with: raw) as? [String: Any] else { continue }
-            if object["event"] as? String == "ready" { return }
+            outer.onTermination = { @Sendable _ in task.cancel() }
         }
     }
 
@@ -79,58 +79,43 @@ public actor AcpHostClient {
                      permission: @escaping @Sendable (AcpPermissionAsk) async -> AcpPermissionOutcome,
                      yield: @escaping (String) -> Void) async throws
     {
-        let (input, output, process) = try ensureDaemon()
-        defer { /* 进程常驻，不在这里收尾 */ }
+        let daemon = try ensureDaemon()
+        let session = allocateSession()
+        let stream = daemon.open(session: session)
+        defer { daemon.close(session: session) }
 
-        let writer = input.fileHandleForWriting
-        let session = "s1"
-        let lock = NSLock()
-        func send(_ object: [String: Any]) {
-            guard let data = try? JSONSerialization.data(withJSONObject: object) else { return }
-            lock.lock()
-            writer.write(data)
-            writer.write(Data([0x0A]))
-            lock.unlock()
-        }
-
-        let lines = LineFeed(handle: output.fileHandleForReading)
-        defer { lines.stop() }
-
-        send(["id": "1", "method": "session.start",
-              "params": ["agent": agent, "cwd": cwd]])
+        daemon.send(["id": "1", "method": "session.start",
+                     "params": ["agent": agent, "cwd": cwd]])
 
         let deadline = Date().addingTimeInterval(timeout)
         var prompted = false
 
-        for await line in lines.stream {
+        for await line in stream {
             if Task.isCancelled { return }
             if Date() > deadline {
                 throw AcpError.agent("agent 超过 \(Int(timeout)) 秒没有结束。")
             }
-            guard let data = line.data(using: .utf8),
-                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+            guard let event = Self.event(from: line) else { continue }
 
-            switch object["event"] as? String {
+            switch event["event"] as? String {
             case "ready":
                 if !prompted {
                     prompted = true
-                    send(["id": "2", "method": "session.prompt",
-                          "params": ["session": session, "text": text]])
+                    daemon.send(["id": "2", "method": "session.prompt",
+                                 "params": ["session": session, "text": text]])
                 }
-            case "authenticated":
-                continue
             case "text":
-                if let text = object["text"] as? String, !text.isEmpty { yield(text) }
+                if let text = event["text"] as? String, !text.isEmpty { yield(text) }
             case "permission":
-                let request = object["request"] as? String ?? ""
-                let title = object["title"] as? String ?? "请求权限"
-                let options = (object["options"] as? [[String: Any]] ?? []).map {
+                let request = event["request"] as? String ?? ""
+                let title = event["title"] as? String ?? "请求权限"
+                let options = (event["options"] as? [[String: Any]] ?? []).map {
                     AcpPermissionOption(id: $0["optionId"] as? String ?? "",
                                         name: $0["name"] as? String ?? "",
                                         kind: $0["kind"] as? String ?? "")
                 }
                 let ask = AcpPermissionAsk(sessionId: session, title: title, detail: "", options: options)
-                Task {
+                Task { [weak daemon] in
                     let outcome = await permission(ask)
                     let option: String
                     switch outcome {
@@ -138,97 +123,162 @@ public actor AcpHostClient {
                     case .cancelled: option = "reject"
                     }
                     // 原样回传 optionId，"总是允许"才生效
-                    send(["id": "3", "method": "permission",
-                          "params": ["session": session, "request": request, "option": option]])
+                    daemon?.send(["id": "3", "method": "permission",
+                                  "params": ["session": session, "request": request, "option": option]])
                 }
             case "done":
                 return
             case "error":
-                let message = object["message"].map { "\($0)" } ?? "未知错误"
+                let message = event["message"].map { "\($0)" } ?? "未知错误"
                 throw AcpError.agent(message)
             default:
                 continue
             }
         }
 
-        // 进程没了但没收到 done：下次提问重起
         stopDaemon()
         if Task.isCancelled { return }
         throw AcpError.launch("acp-host 提前退出了。")
     }
-}
 
-private extension AcpHostClient {
-    func ensureDaemon() throws -> (Pipe, Pipe, Process) {
-        if let daemon, daemon.process.isRunning {
-            return (daemon.input, daemon.output, daemon.process)
-        }
+    // MARK: - 守护进程
+
+    private func allocateSession() -> String {
+        nextSession += 1
+        return "s\(nextSession)"
+    }
+
+    private func ensureDaemon() throws -> Daemon {
+        if let daemon, daemon.isRunning { return daemon }
         guard let binary = Self.locateBinary() else {
             throw AcpError.launch("找不到 acp-host。设置里填它的路径，或先在 acp-host 里 cargo build --release。")
         }
-        let process = Process()
+        let daemon = try Daemon(binary: binary,
+                                environment: ProcessInfo.processInfo.environment,
+                                traceToStderr: ProcessInfo.processInfo.environment["ACP_HOST_TRACE"] != nil)
+        self.daemon = daemon
+        return daemon
+    }
+
+    private func stopDaemon() {
+        daemon?.terminate()
+        daemon = nil
+    }
+
+    /// 守护进程路径：设置里优先（直接读 UserDefaults，Core 不依赖 app 层的 Settings）
+    public static func locateBinary(configured: String? = nil) -> String? {
+        let configured = configured ?? (UserDefaults.standard.string(forKey: "acpHostPath") ?? "")
+        if !configured.isEmpty, FileManager.default.isExecutableFile(atPath: configured) {
+            return configured
+        }
+        let home = NSHomeDirectory()
+        return ["\(home)/code/acp-host/target/release/acp-host",
+                "/usr/local/bin/acp-host",
+                "/opt/homebrew/bin/acp-host"]
+            .first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
+    private static func event(from line: String) -> [String: Any]? {
+        guard let data = line.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return object
+    }
+}
+
+/// 一个常驻子进程 + 一条读取线程 + 按 session 分流
+private final class Daemon {
+    private let process: Process
+    private let writer: FileHandle
+    private var buffer = Data()
+    private var routes: [String: AsyncStream<String>.Continuation] = [:]
+    private let lock = NSLock()
+
+    var isRunning: Bool { process.isRunning }
+
+    init(binary: String, environment: [String: String], traceToStderr: Bool) throws {
+        process = Process()
         process.executableURL = URL(fileURLWithPath: binary)
-        var environment = ProcessInfo.processInfo.environment
-        environment["PATH"] = AcpEnvironment.searchPath()
-        process.environment = environment
+
+        var env = environment
+        env["PATH"] = AcpEnvironment.searchPath()
+        // 免打扰模式：让守护进程给 CLI 补 --dangerously-skip-permissions
+        if UserDefaults.standard.bool(forKey: "skipAgentPermissions") {
+            env["ACP_HOST_SKIP_PERMISSIONS"] = "1"
+        }
+        process.environment = env
 
         let input = Pipe()
         let output = Pipe()
         process.standardInput = input
         process.standardOutput = output
-        // 排查时把子进程 stderr 透出来（ACP_HOST_TRACE=1）
-        process.standardError = ProcessInfo.processInfo.environment["ACP_HOST_TRACE"] != nil
-            ? FileHandle.standardError : FileHandle.nullDevice
+        process.standardError = traceToStderr ? FileHandle.standardError : FileHandle.nullDevice
 
         try process.run()
-        daemon = (process, input, output)
-        return (input, output, process)
-    }
+        writer = input.fileHandleForWriting
 
-    func stopDaemon() {
-        if let daemon, daemon.process.isRunning { daemon.process.terminate() }
-        daemon = nil
-    }
-}
-
-/// 把子进程 stdout 按行切出来（readabilityHandler 在后台线程，用 AsyncStream 转交给上层）
-private final class LineFeed {
-    let stream: AsyncStream<String>
-    private let continuation: AsyncStream<String>.Continuation
-    private var buffer = Data()
-    private var handle: FileHandle?
-
-    init(handle: FileHandle) {
-        var escape: AsyncStream<String>.Continuation!
-        stream = AsyncStream { escape = $0 }
-        continuation = escape
-        self.handle = handle
-        handle.readabilityHandler = { [weak self] handle in
+        let reader = output.fileHandleForReading
+        reader.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
-            guard let self else { return }
-            if data.isEmpty {
-                self.finish()
-                return
-            }
-            self.buffer.append(data)
-            while let newline = self.buffer.firstIndex(of: 0x0A) {
-                let lineData = self.buffer[self.buffer.startIndex..<newline]
-                self.buffer.removeSubrange(self.buffer.startIndex...newline)
-                if let text = String(data: lineData, encoding: .utf8), !text.isEmpty {
-                    self.continuation.yield(text)
-                }
+            guard let self, !data.isEmpty else { return }
+            self.consume(data)
+        }
+    }
+
+    func open(session: String) -> AsyncStream<String> {
+        AsyncStream { continuation in
+            lock.lock()
+            routes[session] = continuation
+            lock.unlock()
+            continuation.onTermination = { [weak self] _ in
+                self?.lock.lock()
+                self?.routes[session] = nil
+                self?.lock.unlock()
             }
         }
     }
 
-    func stop() {
-        handle?.readabilityHandler = nil
-        handle = nil
-        continuation.finish()
+    func close(session: String) {
+        lock.lock()
+        let route = routes.removeValue(forKey: session)
+        lock.unlock()
+        route?.finish()
     }
 
-    private func finish() {
-        handle?.readabilityHandler = nil
-        continuation.finish()
+    func send(_ object: [String: Any]) {
+        guard let data = try? JSONSerialization.data(withJSONObject: object) else { return }
+        lock.lock()
+        writer.write(data)
+        writer.write(Data([0x0A]))
+        lock.unlock()
+    }
+
+    func terminate() {
+        lock.lock()
+        let all = routes
+        routes.removeAll()
+        lock.unlock()
+        all.values.forEach { $0.finish() }
+        if process.isRunning { process.terminate() }
+    }
+
+    private func consume(_ data: Data) {
+        lock.lock()
+        buffer.append(data)
+        var lines: [String] = []
+        while let newline = buffer.firstIndex(of: 0x0A) {
+            let slice = buffer[buffer.startIndex..<newline]
+            buffer.removeSubrange(buffer.startIndex...newline)
+            if let text = String(data: slice, encoding: .utf8), !text.isEmpty { lines.append(text) }
+        }
+        let table = routes
+        lock.unlock()
+
+        for line in lines {
+            // 每条事件都带 session；对不上就不认
+            guard let data = line.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+            guard let session = object["session"] as? String, let route = table[session] else { continue }
+            route.yield(line)
+        }
     }
 }

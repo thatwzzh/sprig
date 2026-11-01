@@ -48,8 +48,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if Settings.useAcpHost {
             let agent = Settings.activeAgent?.presetID ?? "workbuddy"
             let cwd = Settings.acpWorkspacePath
+            let warmModel = Settings.warmModelOnLaunch
             Task.detached(priority: .utility) {
-                await AcpHostClient.shared.prewarm(agent: agent, cwd: cwd)
+                await AcpHostClient.shared.prewarm(agent: agent, cwd: cwd, warmModel: warmModel)
             }
         }
 
