@@ -45,8 +45,12 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
     private var activityStarted: Date?
     private var activityTimer: Timer?
     private var recentTools: [String] = []
+    /// 最后一次算出来的状态文本，切卡回来时重放
+    private var activityText = ""
     /// 每次提问一个 token：并发提问时别让旧回合的收尾把新回合的计时停掉
     private var activityToken: UUID?
+    /// 正在流式输出的那张卡：切走再切回来时用它判断要不要恢复「正在思考」
+    private var streamingOwner: UUID?
 
     private var parser = TermParser()
     private var seenTerms: Set<String> = []
@@ -1124,6 +1128,7 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         let path = AcpEnvironment.searchPath()
         let modelID = Settings.activeAgent?.modelID
         let ownerID = owner
+        streamingOwner = owner
         streamTask = Task { @MainActor [weak self] in
             guard let self else { return }
             let stream = await AcpClient.shared.ask(text: prompt,
@@ -1158,6 +1163,7 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         let agent = Settings.activeAgent?.presetID ?? "workbuddy"
         let cwd = Settings.acpWorkspacePath
         let ownerID = owner
+        streamingOwner = owner
 
         streamTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -1232,6 +1238,7 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
             text += " · \(tool)"
         }
         if text.count > 42 { text = String(text.prefix(40)) + "…" }
+        activityText = text
         answerView.updateThinkingPlaceholder(text)
     }
 
@@ -1395,6 +1402,7 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
     /// 后台跑的任务内容都在 backgroundRaw 里，stack 里的节点还是切走时的旧值。
     /// 之前这里直接走 finishStreaming()，它看到 stack.raw 为空就报「模型没有返回任何内容」。
     private func finish(owner: UUID) {
+        if streamingOwner == owner { streamingOwner = nil }
         guard !cancelledOwners.contains(owner) else { return }
         let buffered = backgroundRaw[owner]
         backgroundRaw[owner] = nil
@@ -1441,6 +1449,7 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
 
     /// 流式失败。后台任务不弹提示到面板上，只记进卡片。
     private func fail(owner: UUID, error: Error) {
+        if streamingOwner == owner { streamingOwner = nil }
         guard !cancelledOwners.contains(owner) else { return }
         guard stack.last?.card.id == owner else {
             // 和前台一样：报错不写进卡片，只把已经生成的部分存下来
@@ -1788,6 +1797,8 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
     private func cancelStreaming() {
         streamTask?.cancel()
         streamTask = nil
+        streamingOwner = nil
+        endActivity()
         guard isStreaming else { return }
         isStreaming = false
         let tail = parser.flush()
@@ -1840,6 +1851,12 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
     // MARK: - 卡片树导航
 
     private func renderCurrent(placeholder: Bool = false) {
+        // 切回正在输出的卡片：把后台攒的文本并回当前节点，后续 chunk 才会继续长在这张卡上
+        if let id = stack.last?.card.id, let buffered = backgroundRaw[id] {
+            backgroundRaw[id] = nil
+            stack[stack.count - 1].raw += buffered
+        }
+
         if let node = stack.last, node.errorText == nil, let error = backgroundErrors[node.card.id] {
             stack[stack.count - 1].errorText = error
             backgroundErrors[node.card.id] = nil
@@ -1864,8 +1881,11 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         }
         attachSearchLinks(for: node.card)
 
-        if node.raw.isEmpty && placeholder {
+        if node.raw.isEmpty && (placeholder || streamingOwner == node.card.id) {
             answerView.showThinkingPlaceholder()
+            if streamingOwner == node.card.id, !activityText.isEmpty {
+                answerView.updateThinkingPlaceholder(activityText)
+            }
             answerHeight = Theme.answerMinHeight
         } else {
             answerHeight = measuredAnswerHeight()
