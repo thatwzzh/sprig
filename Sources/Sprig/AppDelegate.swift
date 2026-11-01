@@ -11,6 +11,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AcpClient.shared.killForQuit()
     }
 
+    /// 从 Mission Control / Dock 点回来时，把浮动面板重新拉到最前。
+    /// 面板是 .floating 且 app 是 LSUIElement，不处理的话点了也「回不到顶层」。
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        PanelController.shared.presentPanel()
+        return false
+    }
+
     /// sprig://demo?step=N 由 LaunchServices 送到这里
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls {

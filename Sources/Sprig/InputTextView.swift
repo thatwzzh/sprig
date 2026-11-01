@@ -51,6 +51,12 @@ final class InputTextView: NSTextView {
     }
 
     override func keyDown(with event: NSEvent) {
+        // 输入法还在组词（拼音候选没上屏）时，回车是「选词」而不是「发送」，
+        // 交给输入法自己处理；否则一按回车就把半截拼音发出去了。
+        if hasMarkedText() {
+            super.keyDown(with: event)
+            return
+        }
         // 36 = Return, 76 = 小键盘 Enter, 53 = Esc
         if (event.keyCode == 36 || event.keyCode == 76) && !event.modifierFlags.contains(.shift) {
             onSubmit?()

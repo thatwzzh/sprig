@@ -39,6 +39,8 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
     /// 转到后台继续跑的卡片 → 已累积的原始文本。
     /// 面板一次只显示一张卡，后台那些只累积不渲染，跑完统一落库。
     private var backgroundRaw: [UUID: String] = [:]
+    /// 正在被删除（或已删除）的卡片：迟到的流式回调不要再写回库里，否则会「诈尸」
+    private var cancelledOwners: Set<UUID> = []
 
     private var parser = TermParser()
     private var seenTerms: Set<String> = []
@@ -192,6 +194,14 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         } else {
             show()
         }
+    }
+
+    /// 从 Mission Control / Dock 点回来：激活 app、把面板重新置顶
+    func presentPanel() {
+        NSApp.activate(ignoringOtherApps: true)
+        show()
+        panel.orderFrontRegardless()
+        panel.makeKey()
     }
 
     func show() {
@@ -1211,6 +1221,7 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
     /// 收到一段流式内容。`owner` 是产生它的那张卡：
     /// 正在面板上显示就走渲染，已经切走的只累积，避免把 A 的字画到 B 上。
     private func consume(_ chunk: String, owner: UUID) {
+        guard !cancelledOwners.contains(owner) else { return }
         // 已经在后台跑的任务就一直跑到底：parser 和渲染缓冲都是单例状态，
         // 中途切回前台再接管，会把已经显示过的部分重放一遍。
         if backgroundRaw[owner] != nil {
@@ -1274,6 +1285,7 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
     /// 后台跑的任务内容都在 backgroundRaw 里，stack 里的节点还是切走时的旧值。
     /// 之前这里直接走 finishStreaming()，它看到 stack.raw 为空就报「模型没有返回任何内容」。
     private func finish(owner: UUID) {
+        guard !cancelledOwners.contains(owner) else { return }
         let buffered = backgroundRaw[owner]
         backgroundRaw[owner] = nil
 
@@ -1319,6 +1331,7 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
 
     /// 流式失败。后台任务不弹提示到面板上，只记进卡片。
     private func fail(owner: UUID, error: Error) {
+        guard !cancelledOwners.contains(owner) else { return }
         guard stack.last?.card.id == owner else {
             // 和前台一样：报错不写进卡片，只把已经生成的部分存下来
             let raw = backgroundRaw[owner] ?? ""
@@ -1905,8 +1918,18 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         guard let card = pendingDelete else { return }
         pendingDelete = nil
 
+        // 正在回答的卡片被删：先掐掉这一轮，别让它在后台继续烧 token
+        if isStreaming, let owner = stack.last?.card.id, owner == card.id {
+            cancelStreaming()
+        }
+        cancelledOwners.insert(card.id)
+
         Task { @MainActor in
             let removed = await CardStore.shared.delete(id: card.id)
+            for id in removed {
+                self.cancelledOwners.insert(id)
+                self.backgroundRaw[id] = nil
+            }
             if stack.contains(where: { removed.contains($0.card.id) }) {
                 resetToEmpty()
             }
