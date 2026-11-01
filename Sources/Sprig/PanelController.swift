@@ -1226,9 +1226,13 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
     private func refreshActivity() {
         guard let started = activityStarted else { return }
         let seconds = max(0, Int(Date().timeIntervalSince(started)))
-        var lines = ["正在思考 \(seconds)s"]
-        lines.append(contentsOf: recentTools.map { "· \($0)" })
-        answerView.updateThinkingPlaceholder(lines.joined(separator: "\n"))
+        // 答案区最小高度只够一行，两行会被裁；把状态和最近一步压在同一行
+        var text = "正在思考 \(seconds)s"
+        if let tool = recentTools.first {
+            text += " · \(tool)"
+        }
+        if text.count > 42 { text = String(text.prefix(40)) + "…" }
+        answerView.updateThinkingPlaceholder(text)
     }
 
     private func endActivity(_ token: UUID? = nil) {
