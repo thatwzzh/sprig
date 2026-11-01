@@ -41,6 +41,12 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
     private var backgroundRaw: [UUID: String] = [:]
     /// 正在被删除（或已删除）的卡片：迟到的流式回调不要再写回库里，否则会「诈尸」
     private var cancelledOwners: Set<UUID> = []
+    /// 等待期的活动状态：开始时间 + 最近两步工具，用来画「正在思考 12s · Bash: ls」
+    private var activityStarted: Date?
+    private var activityTimer: Timer?
+    private var recentTools: [String] = []
+    /// 每次提问一个 token：并发提问时别让旧回合的收尾把新回合的计时停掉
+    private var activityToken: UUID?
 
     private var parser = TermParser()
     private var seenTerms: Set<String> = []
@@ -1157,31 +1163,88 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
             guard let self else { return }
             let stream = await AcpHostClient.shared.ask(
                 text: text, agent: agent, cwd: cwd,
-                onActivity: { line in
+                onActivity: { activity in
                     Task { @MainActor in
-                        PanelController.shared.answerView.updateThinkingPlaceholder(line)
+                        PanelController.shared.applyActivity(activity)
                     }
                 },
                 permission: { ask in
                     await PanelController.shared.requestPermission(ask)
                 })
+            let activity = self.beginActivity()
             var gotText = false
             do {
                 for try await chunk in stream {
                     if Task.isCancelled { return }
                     if !gotText {
                         gotText = true
+                        self.endActivity(activity)
                         self.answerView.clearThinkingPlaceholder()
                     }
                     self.consume(chunk, owner: ownerID)
                 }
                 if Task.isCancelled { return }
+                self.endActivity(activity)
                 self.finish(owner: ownerID)
             } catch {
                 if Task.isCancelled { return }
+                self.endActivity(activity)
                 self.fail(owner: ownerID, error: error)
             }
         }
+    }
+
+    // MARK: - 等待期活动
+
+    @discardableResult
+    private func beginActivity() -> UUID {
+        let token = UUID()
+        activityToken = token
+        activityStarted = Date()
+        recentTools = []
+        answerView.showThinkingPlaceholder()
+        activityTimer?.invalidate()
+        activityTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.refreshActivity() }
+        }
+        refreshActivity()
+        return token
+    }
+
+    private func applyActivity(_ activity: AcpHostActivity) {
+        guard activityStarted != nil else { return }
+        if case .tool(let title) = activity {
+            let line = Self.readableTool(title)
+            if recentTools.first != line {
+                recentTools.insert(line, at: 0)
+                if recentTools.count > 1 { recentTools.removeLast() }
+            }
+            refreshActivity()
+        }
+    }
+
+    private func refreshActivity() {
+        guard let started = activityStarted else { return }
+        let seconds = max(0, Int(Date().timeIntervalSince(started)))
+        var lines = ["正在思考 \(seconds)s"]
+        lines.append(contentsOf: recentTools.map { "· \($0)" })
+        answerView.updateThinkingPlaceholder(lines.joined(separator: "\n"))
+    }
+
+    private func endActivity(_ token: UUID? = nil) {
+        if let token, token != activityToken { return }
+        activityToken = nil
+        activityTimer?.invalidate()
+        activityTimer = nil
+        activityStarted = nil
+        recentTools = []
+    }
+
+    /// 工具标题压成一行，别把整段路径糊上去
+    private static func readableTool(_ title: String) -> String {
+        let flat = title.replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return flat.count > 46 ? String(flat.prefix(44)) + "…" : flat
     }
 
     private func showLocalError(_ message: String) {

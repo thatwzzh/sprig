@@ -8,6 +8,14 @@ import Foundation
 /// 关键点：守护进程**常驻**，而且**所有会话共用一条读取线程**。
 /// 早先每个提问各建一个 readabilityHandler，第二个问题会把第一个的回调顶掉，
 /// 结果旧答案画到新卡片上——现在按 `session` 字段分流。
+/// 等待期能给用户看的东西
+public enum AcpHostActivity: Sendable {
+    /// 模型在思考（内容太碎，不逐字展示，只用来跑计时）
+    case thinking
+    /// 正在/刚执行过的工具，已经整理成一行可读的描述
+    case tool(String)
+}
+
 public actor AcpHostClient {
     public static let shared = AcpHostClient()
 
@@ -80,7 +88,7 @@ public actor AcpHostClient {
                     agent: String,
                     cwd: String,
                     timeout: TimeInterval = 180,
-                    onActivity: (@Sendable (String) -> Void)? = nil,
+                    onActivity: (@Sendable (AcpHostActivity) -> Void)? = nil,
                     permission: @escaping @Sendable (AcpPermissionAsk) async -> AcpPermissionOutcome)
         -> AsyncThrowingStream<String, Error>
     {
@@ -107,7 +115,7 @@ public actor AcpHostClient {
                      cwd: String,
                      timeout: TimeInterval,
                      permission: @escaping @Sendable (AcpPermissionAsk) async -> AcpPermissionOutcome,
-                     activity: (@Sendable (String) -> Void)?,
+                     activity: (@Sendable (AcpHostActivity) -> Void)?,
                      yield: @escaping (String) -> Void) async throws
     {
         let daemon = try ensureDaemon()
@@ -140,13 +148,10 @@ public actor AcpHostClient {
 
             // 等待期的反馈：模型在想什么、打算跑什么工具
             case "thought":
-                if let text = event["text"] as? String, !text.isEmpty {
-                    activity?(String(text.prefix(60)))
-                }
+                activity?(.thinking)
             case "tool":
                 let title = event["title"] as? String ?? "工具调用"
-                let status = event["status"] as? String ?? ""
-                activity?(status.isEmpty ? title : "\(title)（\(status)）")
+                activity?(.tool(title))
             case "permission":
                 let request = event["request"] as? String ?? ""
                 let title = event["title"] as? String ?? "请求权限"
