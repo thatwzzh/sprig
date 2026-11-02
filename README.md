@@ -336,15 +336,26 @@ SPRIG_SIGN_IDENTITY="Sprig Dev" ./scripts/make-app.sh
 ### 走 acp-host 守护进程
 
 agent 的协议细节（登录、换模型、各家脾气）可以交给外部守护进程 [`acp-host`](https://github.com/thatwzzh/acp-host)，
-app 这层只收文本。默认关，切过去：
+app 这层只收文本。
+
+先装它（任选其一）：
+
+```bash
+brew tap thatwzzh/acp-host && brew install acp-host   # 推荐
+npm i -g acp-host-client                              # 或
+pip install acp-host-client                           # 或
+```
+
+再打开开关：
 
 ```bash
 defaults write com.catking.sprig.app useAcpHost -bool true
-defaults write com.catking.sprig.app acpHostPath -string "$HOME/code/acp-host/target/release/acp-host"
 ```
 
-关掉就把 `useAcpHost` 写回 `false`。不填路径时按 `~/code/acp-host/target/release/`、`/usr/local/bin`、
-`/opt/homebrew/bin` 依次找。
+关掉就把 `useAcpHost` 写回 `false`。
+
+二进制查找顺序：设置里的 `acpHostPath` → `~/code/acp-host/target/release/` → `/usr/local/bin` →
+`/opt/homebrew/bin`。用 Homebrew 装的话不用配路径，自动就能找到。
 
 **等待期反馈**：模型的思考片段和工具调用会显示在「正在思考…」那一行（如 `Bash: ls`），
 首字到达后自动让位给正文。
