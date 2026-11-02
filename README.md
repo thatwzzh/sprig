@@ -310,6 +310,26 @@ gh release create v0.2.1 build/Sprig-v0.2.1.zip --title "知枝 v0.2.1" --notes 
 SPRIG_BUNDLE_ID=com.catking.sprig.dev ./scripts/make-app.sh
 ```
 
+### 数据目录与系统授权
+
+知识库放在 `~/Library/Application Support/Sprig/repository`（**不是** `~/Documents`）。
+早先放在 Documents，而 app 是 adhoc 签名——每次重新构建 CDHash 都会变，系统就当成新 app，
+于是每次都重新问「想访问您的文稿文件夹」。现在数据不在受 TCC 保护的目录里，这类弹窗从根上没有了；
+老用户首次启动会自动把 `~/Documents/Sprig` 搬过来。
+
+**辅助功能 / 屏幕录制**这两项是 adhoc 签名绕不开的：签名变了，系统就忘了你授权过。
+想要「授权一次、之后重构建也不重问」，用一个稳定的签名身份：
+
+1. 钥匙串访问 → 证书助理 → 创建证书：
+   名称填 `Sprig Dev`，身份类型「自签名根证书」，证书类型「代码签名」
+2. 出包时指定它：
+
+```bash
+SPRIG_SIGN_IDENTITY="Sprig Dev" ./scripts/make-app.sh
+```
+
+之后 TCC 的授权跟着这张证书走，重构建不会再问。要发布给别人的包还是建议用 Apple Developer 证书做公证。
+
 ### 走 acp-host 守护进程
 
 agent 的协议细节（登录、换模型、各家脾气）可以交给外部守护进程 [`acp-host`](https://github.com/thatwzzh/acp-host)，

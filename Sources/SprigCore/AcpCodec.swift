@@ -783,7 +783,9 @@ public enum AcpEnvironment {
 
     static func normalizeCwd(_ raw: String) -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        let fallback = (NSHomeDirectory() as NSString).appendingPathComponent("Documents/Sprig/workspaces")
+        // 和 Settings.sprigDirectory 保持一致：不放 Documents，免得每次构建都弹文稿授权
+        let fallback = (NSHomeDirectory() as NSString)
+            .appendingPathComponent("Library/Application Support/Sprig/workspaces")
         let expanded = ((trimmed.isEmpty ? fallback : trimmed) as NSString).expandingTildeInPath
         if expanded.hasPrefix("/") { return expanded }
         return (NSHomeDirectory() as NSString).appendingPathComponent(expanded)

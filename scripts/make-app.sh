@@ -89,5 +89,13 @@ BUILD_NUMBER=$(git rev-list --count HEAD 2>/dev/null || echo 1)
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD_NUMBER}" "$APP/Contents/Info.plist"
 echo "版本 ${VERSION}（build ${BUILD_NUMBER}）"
 
-codesign --force --sign - "$APP" >/dev/null 2>&1 || true
+# 签名：默认 adhoc。adhoc 每次构建 CDHash 都会变，系统记不住授权（辅助功能/屏幕录制会重弹）。
+# 有稳定的签名证书时用 SPRIG_SIGN_IDENTITY 指定，授权就跟着证书走，不再每次重问。
+if [ -n "${SPRIG_SIGN_IDENTITY:-}" ]; then
+  codesign --force --options runtime --sign "$SPRIG_SIGN_IDENTITY" "$APP" >/dev/null 2>&1 \
+    && echo "已签名：$SPRIG_SIGN_IDENTITY" \
+    || echo "!! 签名失败（证书名对吗？security find-identity -v -p codesigning）"
+else
+  codesign --force --sign - "$APP" >/dev/null 2>&1 || true
+fi
 echo "$APP"

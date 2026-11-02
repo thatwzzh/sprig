@@ -591,9 +591,43 @@ enum Settings {
 
     // MARK: - 知识库目录
 
-    /// ~/Documents/Sprig。知识库和工作区都放在它下面。
+    /// ~/Library/Application Support/Sprig。知识库和工作区都放在它下面。
+    ///
+    /// 早先放在 ~/Documents，每次重新构建（adhoc 签名换了 CDHash）都会重新弹
+    /// 「想访问您的文稿文件夹」。Application Support 不受 TCC 管，从根上没这个弹窗。
     private static var sprigDirectory: URL {
-        documentsDirectory.appendingPathComponent(AppInfo.englishName, isDirectory: true)
+        applicationSupportDirectory.appendingPathComponent(AppInfo.englishName, isDirectory: true)
+    }
+
+    private static var applicationSupportDirectory: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+                .appendingPathComponent("Library/Application Support", isDirectory: true)
+    }
+
+    /// 老版本把数据放在 ~/Documents/Sprig。这里做一次性搬迁，搬完就再也不碰 Documents。
+    static func migrateLibraryIfNeeded() {
+        let old = documentsDirectory.appendingPathComponent(AppInfo.englishName, isDirectory: true)
+        let new = sprigDirectory
+        let manager = FileManager.default
+        guard manager.fileExists(atPath: old.path) else { return }
+
+        let already = (try? manager.contentsOfDirectory(atPath: new.path))?.isEmpty == false
+        guard !already else { return }
+
+        try? manager.createDirectory(at: new.deletingLastPathComponent(),
+                                     withIntermediateDirectories: true)
+        do {
+            try manager.moveItem(at: old, to: new)
+        } catch {
+            // 跨卷或权限问题：退回复制
+            if let items = try? manager.contentsOfDirectory(atPath: old.path) {
+                for item in items {
+                    try? manager.copyItem(at: old.appendingPathComponent(item),
+                                          to: new.appendingPathComponent(item))
+                }
+            }
+        }
     }
 
     /// 知识库（卡片 JSON）所在目录，默认 ~/Documents/Sprig/repository

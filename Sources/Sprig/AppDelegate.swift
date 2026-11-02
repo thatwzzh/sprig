@@ -93,7 +93,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             PanelController.shared.toggleTreeShortcut()
         }
 
-        // 知识库目录来自设置（默认 ~/Documents/Sprig/repository）；首次切换时 CardStore 会把旧数据搬过去
+        // 老版本数据在 ~/Documents/Sprig，先搬出来（只需一次）
+        Settings.migrateLibraryIfNeeded()
+
+        // 知识库目录来自设置（默认 ~/Library/Application Support/Sprig/repository）；首次切换时 CardStore 会把旧数据搬过去
         Task.detached(priority: .userInitiated) {
             await CardStore.shared.useDirectory(Settings.cardsDirectory)
         }
