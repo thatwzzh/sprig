@@ -338,15 +338,22 @@ SPRIG_SIGN_IDENTITY="Sprig Dev" ./scripts/make-app.sh
 agent 的协议细节（登录、换模型、各家脾气）可以交给外部守护进程 [`acp-host`](https://github.com/thatwzzh/acp-host)，
 app 这层只收文本。
 
-先装它（任选其一）：
+**发布包已经自带 acp-host**（`Contents/Resources/acp-host`），下载 zip 就能用，不用另外安装。
+
+自己从源码打包时，脚本按这个顺序找二进制并打进去：`SPRIG_ACPHOST` 环境变量 →
+仓库构建产物 → Homebrew → `/usr/local/bin`。想换别处的版本就指定：
 
 ```bash
-brew tap thatwzzh/acp-host && brew install acp-host   # 推荐
-npm i -g acp-host-client                              # 或
-pip install acp-host-client                           # 或
+SPRIG_ACPHOST=/opt/homebrew/bin/acp-host ./scripts/make-app.sh release
 ```
 
-再打开开关：
+运行时也会先找包内那份，再回落到系统里的；确认用哪份、什么版本：
+
+```bash
+Sprig --acp-host-info     # 路径 + 自报版本
+```
+
+然后打开开关：
 
 ```bash
 defaults write com.catking.sprig.app useAcpHost -bool true
@@ -354,8 +361,8 @@ defaults write com.catking.sprig.app useAcpHost -bool true
 
 关掉就把 `useAcpHost` 写回 `false`。
 
-二进制查找顺序：设置里的 `acpHostPath` → `~/code/acp-host/target/release/` → `/usr/local/bin` →
-`/opt/homebrew/bin`。用 Homebrew 装的话不用配路径，自动就能找到。
+二进制查找顺序：设置里的 `acpHostPath` → **包内 `Resources/acp-host`** → `~/code/acp-host/target/release/`
+→ `/usr/local/bin` → `/opt/homebrew/bin`。
 
 **等待期反馈**：模型的思考片段和工具调用会显示在「正在思考…」那一行（如 `Bash: ls`），
 首字到达后自动让位给正文。

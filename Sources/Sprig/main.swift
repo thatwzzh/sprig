@@ -67,6 +67,32 @@ if let index = CommandLine.arguments.firstIndex(of: "--headless"), index + 1 < C
     exit(0)
 }
 
+// 打印实际用到的 acp-host 路径和它自报的版本（排查「装的是旧版」用）
+if CommandLine.arguments.contains("--acp-host-info") {
+    guard let binary = AcpHostClient.locateBinary() else {
+        print("没找到 acp-host")
+        exit(1)
+    }
+    print("路径: \(binary)")
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: binary)
+    let input = Pipe(), output = Pipe()
+    process.standardInput = input
+    process.standardOutput = output
+    process.standardError = FileHandle.nullDevice
+    try? process.run()
+    input.fileHandleForWriting.write(Data("{\"id\":\"1\",\"method\":\"version\"}\n".utf8))
+    let data = output.fileHandleForReading.availableData
+    if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+       let result = object["result"] as? [String: Any],
+       let version = result["version"] as? String {
+        print("版本: \(version)")
+    } else {
+        print("版本: 取不到")
+    }
+    exit(0)
+}
+
 // 让 daemon 列出本机装了哪些 agent
 if CommandLine.arguments.contains("--host-agents") {
     let semaphore = DispatchSemaphore(value: 0)

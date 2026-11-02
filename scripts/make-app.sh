@@ -89,13 +89,41 @@ BUILD_NUMBER=$(git rev-list --count HEAD 2>/dev/null || echo 1)
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD_NUMBER}" "$APP/Contents/Info.plist"
 echo "版本 ${VERSION}（build ${BUILD_NUMBER}）"
 
+# 把 acp-host 打进包：用户下载后开箱可用，不必再去 brew/pip 装一次。
+# 找的顺序：SPRIG_ACPHOST 环境变量 → Homebrew → /usr/local/bin → 仓库构建产物
+ACPHOST=""
+for candidate in "${SPRIG_ACPHOST:-}" "$HOME/code/acp-host/target/release/acp-host" \
+                 /opt/homebrew/bin/acp-host /usr/local/bin/acp-host; do
+  [ -n "$candidate" ] && [ -x "$candidate" ] && ACPHOST="$candidate" && break
+done
+if [ -n "$ACPHOST" ]; then
+  rm -f "$APP/Contents/Resources/acp-host"
+  cp "$ACPHOST" "$APP/Contents/Resources/acp-host"
+  chmod +x "$APP/Contents/Resources/acp-host"
+  echo "已打入 acp-host：$ACPHOST"
+else
+  echo "!! 没找到 acp-host，包内不带（功能要用户自己装）"
+fi
+
 # 签名：默认 adhoc。adhoc 每次构建 CDHash 都会变，系统记不住授权（辅助功能/屏幕录制会重弹）。
 # 有稳定的签名证书时用 SPRIG_SIGN_IDENTITY 指定，授权就跟着证书走，不再每次重问。
+# 注意顺序：包里嵌套的可执行文件必须**先**签，外层后签——外层签名会记录里面的哈希。
+SIGN_ARGS=(--force)
 if [ -n "${SPRIG_SIGN_IDENTITY:-}" ]; then
-  codesign --force --options runtime --sign "$SPRIG_SIGN_IDENTITY" "$APP" >/dev/null 2>&1 \
-    && echo "已签名：$SPRIG_SIGN_IDENTITY" \
-    || echo "!! 签名失败（证书名对吗？security find-identity -v -p codesigning）"
+  SIGN_ARGS+=(--options runtime --sign "$SPRIG_SIGN_IDENTITY")
 else
-  codesign --force --sign - "$APP" >/dev/null 2>&1 || true
+  SIGN_ARGS+=(--sign -)
 fi
+
+if [ -f "$APP/Contents/Resources/acp-host" ]; then
+  codesign "${SIGN_ARGS[@]}" "$APP/Contents/Resources/acp-host" >/dev/null 2>&1 \
+    || echo "!! 内层 acp-host 签名失败"
+fi
+codesign "${SIGN_ARGS[@]}" "$APP" >/dev/null 2>&1 \
+  && echo "已签名：${SPRIG_SIGN_IDENTITY:-adhoc}" \
+  || echo "!! 外层签名失败（证书名对吗？security find-identity -v -p codesigncing）"
+
+codesign --verify --deep --strict "$APP" >/dev/null 2>&1 \
+  && echo "签名校验通过" \
+  || echo "!! 签名校验失败：codesign --verify --deep --strict \"$APP\""
 echo "$APP"

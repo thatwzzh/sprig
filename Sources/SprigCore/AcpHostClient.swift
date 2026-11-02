@@ -217,6 +217,11 @@ public actor AcpHostClient {
         if !configured.isEmpty, FileManager.default.isExecutableFile(atPath: configured) {
             return configured
         }
+        // 优先用打进 app 包的那份：用户下载 zip 就自带，不用另装
+        if let bundled = Bundle.main.resourcePath.map({ $0 + "/acp-host" }),
+           FileManager.default.isExecutableFile(atPath: bundled) {
+            return bundled
+        }
         let home = NSHomeDirectory()
         return ["\(home)/code/acp-host/target/release/acp-host",
                 "/usr/local/bin/acp-host",
