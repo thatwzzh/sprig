@@ -605,6 +605,11 @@ enum Settings {
                 .appendingPathComponent("Library/Application Support", isDirectory: true)
     }
 
+    /// 这个位置是不是 macOS 的受保护目录（判断逻辑在 SprigCore，方便无界面测试）
+    static func isProtectedPath(_ url: URL) -> Bool {
+        StoragePaths.isProtected(url)
+    }
+
     /// 老版本把数据放在 ~/Documents/Sprig。这里做一次性搬迁，搬完就再也不碰 Documents。
     static func migrateLibraryIfNeeded() {
         let old = documentsDirectory.appendingPathComponent(AppInfo.englishName, isDirectory: true)

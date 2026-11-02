@@ -859,12 +859,23 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
 
     private func refreshPath() {
         let url = Settings.cardsDirectory
-        pathLabel.stringValue = (url.path as NSString).abbreviatingWithTildeInPath
+        let protected = Settings.isProtectedPath(url)
+        var text = (url.path as NSString).abbreviatingWithTildeInPath
+        if protected { text += "（受系统保护）" }
+        pathLabel.stringValue = text
+        pathLabel.textColor = protected ? .systemOrange : .labelColor
         pathLabel.toolTip = """
         这是知识库所在的目录：卡片全部存在这里的隐藏文件里，每棵知识树另外导出一份 Markdown 方便阅读和搜索。
         换目录时会把现有卡片一起复制过去，原来的地方不受影响。
         \(url.path)
         """
+            + (protected ? """
+
+            ⚠️ 这个位置在 macOS 的受保护目录下（文稿/桌面/下载等）。
+            首次使用会请求该文件夹的访问权限，允许一次后长期有效；
+            但**更换 app 版本后会再问一次**，因为系统按「应用身份」记账。
+            想彻底避开，把知识库放在默认位置（应用支持目录）即可。
+            """ : "")
     }
 
     @objc private func chooseFolder() {
