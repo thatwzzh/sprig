@@ -24,8 +24,9 @@ public actor AcpHostClient {
 
     /// 启动时预热：把守护进程和会话先建起来。
     /// - Parameter warmModel: 顺便发一句极短的请求，把模型连接也焐热（会消耗一次极小额度）
-    public func prewarm(agent: String, cwd: String, warmModel: Bool = false) async {
-        guard let daemon = try? ensureDaemon() else { return }
+    public func prewarm(agent: String, cwd: String, warmModel: Bool = false,
+                        binaryPath: String? = nil, skipPermissions: Bool = false) async {
+        guard let daemon = try? ensureDaemon(binaryPath: binaryPath, skipPermissions: skipPermissions) else { return }
         let session = allocateSession()
         let stream = daemon.open(session: session)
 
@@ -56,8 +57,8 @@ public actor AcpHostClient {
     }
 
     /// 让守护进程列出本机真的装了的 agent（预设和探测规则都在它那边）
-    public func detectAgents() async -> [(id: String, name: String, command: String)] {
-        guard let binary = Self.locateBinary() else { return [] }
+    public func detectAgents(binaryPath: String? = nil) async -> [(id: String, name: String, command: String)] {
+        guard let binary = Self.locateBinary(configured: binaryPath) else { return [] }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binary)
         var env = ProcessInfo.processInfo.environment
@@ -88,6 +89,8 @@ public actor AcpHostClient {
                     agent: String,
                     cwd: String,
                     timeout: TimeInterval = 180,
+                    binaryPath: String? = nil,
+                    skipPermissions: Bool = false,
                     onActivity: (@Sendable (AcpHostActivity) -> Void)? = nil,
                     permission: @escaping @Sendable (AcpPermissionAsk) async -> AcpPermissionOutcome)
         -> AsyncThrowingStream<String, Error>
@@ -98,6 +101,8 @@ public actor AcpHostClient {
                     try await self.run(text: text, agent: agent, cwd: cwd,
                                        timeout: timeout, permission: permission,
                                        activity: onActivity,
+                                       binaryPath: binaryPath,
+                                       skipPermissions: skipPermissions,
                                        yield: { outer.yield($0) })
                     outer.finish()
                 } catch {
@@ -116,9 +121,11 @@ public actor AcpHostClient {
                      timeout: TimeInterval,
                      permission: @escaping @Sendable (AcpPermissionAsk) async -> AcpPermissionOutcome,
                      activity: (@Sendable (AcpHostActivity) -> Void)?,
+                     binaryPath: String?,
+                     skipPermissions: Bool,
                      yield: @escaping (String) -> Void) async throws
     {
-        let daemon = try ensureDaemon()
+        let daemon = try ensureDaemon(binaryPath: binaryPath, skipPermissions: skipPermissions)
         let session = allocateSession()
         let stream = daemon.open(session: session)
         defer { daemon.close(session: session) }
@@ -194,14 +201,15 @@ public actor AcpHostClient {
         return "s\(nextSession)"
     }
 
-    private func ensureDaemon() throws -> Daemon {
+    private func ensureDaemon(binaryPath: String?, skipPermissions: Bool) throws -> Daemon {
         if let daemon, daemon.isRunning { return daemon }
-        guard let binary = Self.locateBinary() else {
+        guard let binary = Self.locateBinary(configured: binaryPath) else {
             throw AcpError.launch("找不到 acp-host。设置里填它的路径，或先在 acp-host 里 cargo build --release。")
         }
         let daemon = try Daemon(binary: binary,
                                 environment: ProcessInfo.processInfo.environment,
-                                traceToStderr: ProcessInfo.processInfo.environment["ACP_HOST_TRACE"] != nil)
+                                traceToStderr: ProcessInfo.processInfo.environment["ACP_HOST_TRACE"] != nil,
+                                skipPermissions: skipPermissions)
         self.daemon = daemon
         return daemon
     }
@@ -211,10 +219,10 @@ public actor AcpHostClient {
         daemon = nil
     }
 
-    /// 守护进程路径：设置里优先（直接读 UserDefaults，Core 不依赖 app 层的 Settings）
+    /// 守护进程路径。`configured` 由调用方（app 层）传进来，Core 不读偏好设置。
     public static func locateBinary(configured: String? = nil) -> String? {
-        let configured = configured ?? (UserDefaults.standard.string(forKey: "acpHostPath") ?? "")
-        if !configured.isEmpty, FileManager.default.isExecutableFile(atPath: configured) {
+        if let configured, !configured.isEmpty,
+           FileManager.default.isExecutableFile(atPath: configured) {
             return configured
         }
         // 优先用打进 app 包的那份：用户下载 zip 就自带，不用另装
@@ -223,10 +231,14 @@ public actor AcpHostClient {
             return bundled
         }
         let home = NSHomeDirectory()
-        return ["\(home)/code/acp-host/target/release/acp-host",
-                "/usr/local/bin/acp-host",
-                "/opt/homebrew/bin/acp-host"]
-            .first { FileManager.default.isExecutableFile(atPath: $0) }
+        return firstExecutable(["\(home)/code/acp-host/target/release/acp-host",
+                                "/usr/local/bin/acp-host",
+                                "/opt/homebrew/bin/acp-host"])
+    }
+
+    /// 第一个「存在且可执行」的路径。抽出来是为了能无界面测试。
+    public static func firstExecutable(_ candidates: [String]) -> String? {
+        candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
     private static func event(from line: String) -> [String: Any]? {
@@ -246,14 +258,15 @@ private final class Daemon {
 
     var isRunning: Bool { process.isRunning }
 
-    init(binary: String, environment: [String: String], traceToStderr: Bool) throws {
+    init(binary: String, environment: [String: String],
+         traceToStderr: Bool, skipPermissions: Bool) throws {
         process = Process()
         process.executableURL = URL(fileURLWithPath: binary)
 
         var env = environment
         env["PATH"] = AcpEnvironment.searchPath()
         // 免打扰模式：让守护进程给 CLI 补 --dangerously-skip-permissions
-        if UserDefaults.standard.bool(forKey: "skipAgentPermissions") {
+        if skipPermissions {
             env["ACP_HOST_SKIP_PERMISSIONS"] = "1"
         }
         process.environment = env

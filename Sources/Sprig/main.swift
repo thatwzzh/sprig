@@ -69,7 +69,7 @@ if let index = CommandLine.arguments.firstIndex(of: "--headless"), index + 1 < C
 
 // 打印实际用到的 acp-host 路径和它自报的版本（排查「装的是旧版」用）
 if CommandLine.arguments.contains("--acp-host-info") {
-    guard let binary = AcpHostClient.locateBinary() else {
+    guard let binary = AcpHostClient.locateBinary(configured: Settings.acpHostPath.isEmpty ? nil : Settings.acpHostPath) else {
         print("没找到 acp-host")
         exit(1)
     }
@@ -97,7 +97,7 @@ if CommandLine.arguments.contains("--acp-host-info") {
 if CommandLine.arguments.contains("--host-agents") {
     let semaphore = DispatchSemaphore(value: 0)
     Task {
-        let agents = await AcpHostClient.shared.detectAgents()
+        let agents = await AcpHostClient.shared.detectAgents(binaryPath: Settings.acpHostPath.isEmpty ? nil : Settings.acpHostPath)
         for agent in agents { print("\(agent.id)\t\(agent.name)\t\(agent.command.prefix(80))") }
         print("共 \(agents.count) 个")
         semaphore.signal()
@@ -118,8 +118,11 @@ if let index = CommandLine.arguments.firstIndex(of: "--acp-host-probe"),
     let semaphore = DispatchSemaphore(value: 0)
     Task {
         let cwd = Settings.acpWorkspacePath
-        let stream = await AcpHostClient.shared.ask(text: question, agent: agent, cwd: cwd,
-                                                    permission: { _ in .selected("allow") })
+        let stream = await AcpHostClient.shared.ask(
+            text: question, agent: agent, cwd: cwd,
+            binaryPath: Settings.acpHostPath.isEmpty ? nil : Settings.acpHostPath,
+            skipPermissions: Settings.skipAgentPermissions,
+            permission: { _ in .selected("allow") })
         if CommandLine.arguments.contains("--prewarm") {
             await AcpHostClient.shared.prewarm(agent: agent, cwd: cwd)
         }

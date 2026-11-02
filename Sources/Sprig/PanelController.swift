@@ -1173,6 +1173,8 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
             guard let self else { return }
             let stream = await AcpHostClient.shared.ask(
                 text: text, agent: agent, cwd: cwd,
+                binaryPath: Settings.acpHostPath.isEmpty ? nil : Settings.acpHostPath,
+                skipPermissions: Settings.skipAgentPermissions,
                 onActivity: { activity in
                     Task { @MainActor in
                         PanelController.shared.applyActivity(activity)
