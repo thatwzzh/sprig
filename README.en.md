@@ -14,10 +14,11 @@
 
 Not a chat client, not a note-taking app. It does one thing: **removes the friction between asking and asking deeper**.
 
-### [⬇️ Download](https://github.com/thatwzzh/sprig/releases)
+### [⬇️ Download](https://github.com/thatwzzh/sprig/releases)　·　[Website](https://sprig-site.app.workbuddy.host/?sharecode=HVF3SOVDGG)
 
 <p align="center">
   <img src="assets/readme/demo.gif" width="720" alt="Sprig demo: hit ⌥Space, ask, select a term to go deeper, and the tree grows">
+  <br><sub>GIF is compressed, small text blurs · <a href="https://sprig-site.app.workbuddy.host/?sharecode=HVF3SOVDGG">watch the HD video</a></sub>
 </p>
 
 ## What it is
