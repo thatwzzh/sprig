@@ -17,7 +17,7 @@
 > 国内直连更快；GitHub 适合海外或想下历史版本。也可以在[官网](https://sprig-site.app.workbuddy.host/?sharecode=HVF3SOVDGG)看演示。
 
 <p align="center">
-  <a href="https://sprig-site.app.workbuddy.host/?sharecode=HVF3SOVDGG">
+  <a href="https://sprig-site.app.workbuddy.host/?sharecode=HVF3SOVDGG" target="_blank" rel="noopener">
     <img src="assets/readme/demo-poster.png" width="760" alt="点击观看 44 秒演示">
   </a>
 </p>
@@ -161,7 +161,7 @@
 | 类别 | 说明 |
 |---|---|
 | **本地 Ollama** | 跑在本机，完全免费 |
-| **免费** | 智谱 GLM / OpenRouter / Gemini，填个 Key 就能用 |
+| **免费** | 智谱 GLM，填个 Key 就能用 |
 | **自定义** | 任何 OpenAI 兼容服务（DeepSeek、OpenAI、火山方舟…） |
 
 ### 本地（Ollama）
@@ -175,8 +175,6 @@
 | 通道 | 领 Key 的地方 | 模型 |
 |---|---|---|
 | 智谱 GLM | [bigmodel.cn/usercenter/proj-mgmt/apikeys](https://bigmodel.cn/usercenter/proj-mgmt/apikeys) | `glm-4.7-flash` |
-| OpenRouter | [openrouter.ai/keys](https://openrouter.ai/keys) | 定价为 0 且能对话的 |
-| Gemini | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | 只列 `flash` 系，需要代理 |
 
 **智谱要实名认证**——没实名的账号生成的 Key 用不了。
 
@@ -185,10 +183,8 @@
 | 通道 | 实际体验 |
 |---|---|
 | 智谱 GLM-4.7-Flash | 实测成功率约 1/3，多数返回「访问量过大」 |
-| Gemini 免费层 | 频繁 429，且国内需要代理 |
-| OpenRouter 免费 | 高峰期大量 429 |
 
-**它们适合试一下这个 app 是不是你想要的**，不适合当日常主力。要稳定就用 DeepSeek（自定义接入，按 token 计费，充 10 元用几个月）或本地 Ollama。
+**它适合试一下这个 app 是不是你想要的**，不适合当日常主力。要稳定就用 DeepSeek（自定义接入，按 token 计费，充 10 元用几个月）或本地 Ollama。
 
 ### 自定义
 
@@ -209,7 +205,7 @@ Base URL 填到 `/v1` 或只填域名都能识别，`https://x/v1` 不会被拼�
 
 **设置页「联网搜索」下面有一行「代理」**，填 `http://127.0.0.1:7890` 之类，所有出站请求都走它。留空则跟随系统设置。
 
-什么时候需要：用 Gemini、OpenAI、OpenRouter 这些境外服务时。国内服务（DeepSeek、智谱）不需要。
+什么时候需要：用境外服务（OpenAI、Tavily 搜索等）时。国内服务（DeepSeek、智谱、Ollama）不需要。
 
 ## 联网搜索
 
@@ -267,7 +263,7 @@ RAG（检索增强生成）是结合检索与生成的 AI 方法。
 |---|---|---|
 | 模型接入 | 菜单栏「设置…」→ 模型接入 | 智谱免费 + Ollama |
 | Agent | 菜单栏「设置…」→ Agent | 自动列出本机已装的 |
-| Agent 工作目录 | 设置页 → Agent → 工作目录 | `~/Documents/Sprig/workspaces` |
+| Agent 工作目录 | 设置页 → Agent → 工作目录 | `~/Library/Application Support/Sprig/workspaces` |
 | 知识库位置 | 菜单栏「设置…」→ 知识库 → 选择… | `~/Library/Application Support/Sprig/repository` |
 | 阅读主题 | 菜单栏「设置…」→ 阅读主题 | GitHub |
 | 代理 | 菜单栏「设置…」→ 联网搜索 → 代理 | 空（跟随系统） |
