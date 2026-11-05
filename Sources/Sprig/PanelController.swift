@@ -1640,7 +1640,7 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         } else {
             show()
             switch step {
-            case 2:
+            case 2, 5, 6:
                 if !isTreeVisible { setTreeVisible(true) }
                 stack = [Node(card: root, raw: root.answer, scroll: 0)]
             case 3:
@@ -1663,6 +1663,22 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         // 等 mermaid 渲染和淡入动画
         try? await Task.sleep(nanoseconds: 900_000_000)
         content.layoutSubtreeIfNeeded()
+
+        // step 5/6：程序化选中「幻觉」；6 连动作条一起浮出（给录屏/截图用）
+        if step == 5 || step == 6 {
+            let ns = answerView.string as NSString
+            let hit = ns.range(of: "幻觉")
+            if hit.location != NSNotFound {
+                panel.makeFirstResponder(answerView)
+                answerView.setSelectedRange(hit)
+                if step == 6 {
+                    textViewDidChangeSelection(Notification(name: NSTextView.didChangeSelectionNotification))
+                }
+                // makeFirstResponder 会触发一次选区通知把动作条带出来，step 5 只留高亮
+                if step == 5 { content.hideSelectionBar() }
+                content.layoutSubtreeIfNeeded()
+            }
+        }
         if snapshot, let view = panel.contentView {
             writePNG(view, to: URL(fileURLWithPath: "/tmp/sprig-demo-step\(step).png"))
         }

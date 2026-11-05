@@ -6,6 +6,8 @@
 [![License](https://img.shields.io/github/license/thatwzzh/sprig?style=flat-square)](LICENSE)
 [![Platform](https://img.shields.io/badge/macOS-14%2B-blue?style=flat-square)](https://www.apple.com/macos/)
 
+**简体中文** | [English](README.en.md)
+
 **按一下 `⌥Space`，问一句，答案就出来了。答案里任何文字都能选中「解释」，每次解释都在右侧知识树里长出一张子卡——知识像枝一样长，所以叫「知枝」。**
 
 不是聊天客户端，也不是笔记软件。它只做一件事：**把「问」和「追问」之间的摩擦降到接近零**。
