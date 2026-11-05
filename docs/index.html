@@ -107,6 +107,22 @@
     <p class="fineprint">常驻内存不到 120 MB，数据只在你自己机器上。</p>
   </section>
 
+  <!-- Markdown 固化 -->
+  <section class="markdown">
+    <span class="tag">沉淀</span>
+    <h2>对话自动落成 Markdown</h2>
+    <p class="section-lede">一棵知识树 = 一份 <code>.md</code> 文件，实时写进你的知识库目录。用 VS Code、Obsidian、Logseq 都能打开，也能直接 <code>git commit</code>。</p>
+
+    <div class="md-preview">
+      <div class="md-path">~/Library/Application Support/Sprig/repository/</div>
+      <pre><code>RAG.md
+Rust 所有权.md
+HTTP 缓存策略.md</code></pre>
+    </div>
+
+    <p class="fineprint">Markdown 是投影，不是源——在应用里改会重新生成，直接改文件下次保存会被覆盖。首行带 <code>&lt;!-- sprig:root --&gt;</code> 标记，删卡时只删自己的文件，你放进去的笔记不会被碰。</p>
+  </section>
+
   <!-- 安装 -->
   <section class="install">
     <h2>三步开始</h2>

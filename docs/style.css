@@ -238,6 +238,7 @@ kbd.inline {
 
 .agents,
 .native,
+.markdown,
 .install {
   padding: 40px 0;
   text-align: center;
@@ -246,6 +247,7 @@ kbd.inline {
 
 .agents h2,
 .native h2,
+.markdown h2,
 .install h2 {
   margin: 0 0 10px;
   font-size: clamp(1.45rem, 3vw, 2rem);
@@ -330,6 +332,41 @@ kbd.inline {
   margin: 6px 0 0;
   font-size: 0.76rem;
   color: var(--ink-faint);
+}
+
+/* ---------- Markdown 固化 ---------- */
+
+.md-preview {
+  max-width: 480px;
+  margin: 18px auto 0;
+  padding: 14px 18px;
+  text-align: left;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 0.8rem;
+  line-height: 1.7;
+  color: var(--ink-soft);
+}
+
+.md-path {
+  margin-bottom: 8px;
+  font-size: 0.72rem;
+  color: var(--ink-faint);
+}
+
+.md-preview pre {
+  margin: 0;
+  overflow-x: auto;
+}
+
+.markdown code {
+  padding: 1px 5px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 0.88em;
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  border-radius: 4px;
 }
 
 /* ---------- 步骤 ---------- */
