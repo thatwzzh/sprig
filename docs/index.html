@@ -166,5 +166,19 @@ HTTP 缓存策略.md</code></pre>
   <p>© 2026 知枝 · 用 AppKit 手写</p>
 </footer>
 
+
+<script>
+// 静态资源受 sharecode 保护，而相对链接跳转会丢掉 query。
+// 打开页面时把当前 sharecode 补到所有下载链接上，否则点下载会 403。
+(function () {
+  var q = location.search;
+  if (!q) return;
+  document.querySelectorAll('a[download]').forEach(function (a) {
+    if (a.href.indexOf('sharecode=') === -1) {
+      a.href += (a.href.indexOf('?') === -1 ? '?' : '&') + q.slice(1);
+    }
+  });
+})();
+</script>
 </body>
 </html>
