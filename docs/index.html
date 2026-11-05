@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>知枝 Sprig · 把「问」和「追问」之间的摩擦降到接近零</title>
+<meta name="description" content="常驻 macOS 菜单栏的问答面板。按一下 ⌥Space 问一句，选中任何词就能追问，知识像枝一样长成一棵树。全原生 AppKit，15 MB，不需要额外权限。">
+<meta name="theme-color" content="#f7f6f2">
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<main>
+
+  <!-- Hero -->
+  <section class="hero">
+    <div class="keys" aria-hidden="true">
+      <kbd>⌥</kbd><kbd>Space</kbd>
+    </div>
+    <h1>按一下，<br>就在手边</h1>
+    <p class="lede">常驻菜单栏。唤起、提问、追问，全程不换窗口。</p>
+    <div class="cta">
+      <a class="btn btn-primary" href="https://github.com/thatwzzh/sprig/releases">
+        下载 macOS 版
+      </a>
+      <a class="btn btn-ghost" href="https://github.com/thatwzzh/sprig">
+        GitHub
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M6 3h7v7M13 3L4 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </a>
+    </div>
+    <p class="meta">macOS 14+ · 15 MB · MIT · 免费</p>
+  </section>
+
+  <!-- 演示 -->
+  <section class="demo" aria-label="产品演示">
+    <div class="demo-frame">
+      <img src="assets/demo.gif" width="1440" height="810"
+           alt="知枝演示：按一下 ⌥Space 唤出面板，问一句得到答案，选中生词追问，右侧知识树随之生长" loading="eager">
+    </div>
+  </section>
+
+  <!-- 三个卖点 -->
+  <section class="features">
+    <article class="feature">
+      <span class="tag">01 · 提问</span>
+      <h2>问一句，答案就出来</h2>
+      <p>边生成边显示，不用等整段说完。答案按 Markdown 排版，代码着色，流程图直接画出来。</p>
+    </article>
+
+    <article class="feature">
+      <span class="tag">02 · 追问</span>
+      <h2>不懂的词，<br>选中就能追问</h2>
+      <p>选中答案里任何一个词 → <em>解释</em>，立刻长出一张子卡。不用复制、不用开新窗口、不用重述上下文。</p>
+    </article>
+
+    <article class="feature">
+      <span class="tag">03 · 知枝</span>
+      <h2>知识像枝一样长</h2>
+      <p>每张卡都记得自己从哪来。追问时只带相关的祖先节点，不会把整段对话塞进上下文。</p>
+    </article>
+  </section>
+
+  <!-- 接入 agent -->
+  <section class="agents">
+    <span class="tag">接入</span>
+    <h2>接你已经装好的 agent</h2>
+    <p class="section-lede">本机检测到的 CLI 直接列出来，用你已有的订阅额度——不用另外买 API。</p>
+
+    <ul class="agent-list">
+      <li><span class="check" aria-hidden="true">✓</span>CodeBuddy Code</li>
+      <li><span class="check" aria-hidden="true">✓</span>Claude Code</li>
+      <li><span class="check" aria-hidden="true">✓</span>Codex</li>
+      <li><span class="check" aria-hidden="true">✓</span>Cursor CLI</li>
+    </ul>
+
+    <p class="fineprint">不用自己配置模型，把问题交给它——读文件、跑命令都由 agent 自己决定。</p>
+  </section>
+
+  <!-- 原生 -->
+  <section class="native">
+    <span class="tag">04 · 原生</span>
+    <h2>原生写的，不是套壳</h2>
+    <p class="section-lede">全原生 AppKit。没有 WebView 那一层，也没有 Electron 那一层。</p>
+
+    <dl class="stats">
+      <div>
+        <dt>15<span>MB</span></dt>
+        <dd>安装包大小</dd>
+      </div>
+      <div>
+        <dt>50<span>ms</span></dt>
+        <dd>从热键到可见</dd>
+      </div>
+      <div>
+        <dt>0<span>项</span></dt>
+        <dd>辅助功能 / 屏幕录制</dd>
+      </div>
+    </dl>
+
+    <p class="fineprint">常驻内存不到 120 MB，数据只在你自己机器上。</p>
+  </section>
+
+  <!-- 安装 -->
+  <section class="install">
+    <h2>三步开始</h2>
+    <ol class="steps">
+      <li>
+        <h3>下载</h3>
+        <p>从 <a href="https://github.com/thatwzzh/sprig/releases">Releases</a> 拿最新的 <code>.zip</code>，解压后拖进「应用程序」。</p>
+      </li>
+      <li>
+        <h3>允许打开</h3>
+        <p>首次启动 macOS 会说「无法验证开发者」。去系统设置 → 隐私与安全性 → 点「仍要打开」。应用没做代码签名，这一步绕不过。</p>
+      </li>
+      <li>
+        <h3>选一个大脑</h3>
+        <p>设置页会自动列出本机已装的 CLI agent，或者在「模型接入」里填一个 API Key。本地 Ollama 也支持。</p>
+      </li>
+    </ol>
+    <p class="steps-note">之后按 <kbd class="inline">⌥Space</kbd> 唤起，输入问题，回车。</p>
+  </section>
+
+  <!-- 结尾 -->
+  <section class="closing">
+    <img class="mark" src="assets/icon.svg" width="56" height="56" alt="">
+    <h2>知枝 Sprig</h2>
+    <p>把「问」和「追问」之间的摩擦，降到接近零。</p>
+    <div class="cta">
+      <a class="btn btn-primary" href="https://github.com/thatwzzh/sprig/releases">下载 macOS 版</a>
+    </div>
+    <p class="meta">macOS 14+ · 15 MB · MIT · 免费</p>
+  </section>
+
+</main>
+
+<footer>
+  <nav>
+    <a href="https://github.com/thatwzzh/sprig">GitHub</a>
+    <a href="https://github.com/thatwzzh/sprig/blob/main/README.md">文档</a>
+    <a href="https://github.com/thatwzzh/sprig/issues">反馈</a>
+    <a href="https://github.com/thatwzzh/sprig/blob/main/LICENSE">MIT License</a>
+  </nav>
+  <p>© 2026 知枝 · 用 AppKit 手写</p>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,474 @@
+/* 知枝 Sprig — 落地页
+   视觉对齐介绍视频：米白 + 淡绿光晕，深绿强调，大字号。 */
+
+:root {
+  --bg: #f7f6f2;
+  --glow-1: #dcebd8;
+  --glow-2: #eaf2e4;
+  --ink: #16181a;
+  --ink-soft: #565a5e;
+  --ink-faint: #8a8f93;
+  --accent: #1b4332;
+  --accent-soft: #2d6a4f;
+  --line: #e3e2dc;
+  --card: #ffffff;
+  --shadow: 0 24px 70px -20px rgba(22, 40, 30, 0.18);
+  --radius: 16px;
+  --maxw: 1080px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #101312;
+    --glow-1: #1a2b22;
+    --glow-2: #16211b;
+    --ink: #ecedea;
+    --ink-soft: #a2a8a4;
+    --ink-faint: #6f7571;
+    --accent: #7cc49a;
+    --accent-soft: #5aa87a;
+    --line: #262b28;
+    --card: #171b19;
+    --shadow: 0 24px 70px -20px rgba(0, 0, 0, 0.7);
+  }
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue",
+               "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  color: var(--ink);
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(ellipse 90% 55% at 50% -8%, var(--glow-1) 0%, transparent 62%),
+    radial-gradient(ellipse 55% 38% at 88% 12%, var(--glow-2) 0%, transparent 55%);
+  background-repeat: no-repeat;
+  -webkit-font-smoothing: antialiased;
+  line-height: 1.65;
+}
+
+main {
+  max-width: var(--maxw);
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+/* ---------- Hero ---------- */
+
+.hero {
+  text-align: center;
+  padding: 96px 0 40px;
+}
+
+.keys {
+  display: inline-flex;
+  gap: 8px;
+  margin-bottom: 36px;
+}
+
+kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 46px;
+  height: 46px;
+  padding: 0 12px;
+  font-family: inherit;
+  font-size: 19px;
+  font-weight: 500;
+  color: var(--ink);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 2px 0 var(--line), 0 8px 20px -8px rgba(0, 0, 0, 0.18);
+}
+
+kbd.inline {
+  min-width: 0;
+  height: auto;
+  padding: 2px 7px;
+  font-size: 0.9em;
+  border-radius: 6px;
+  box-shadow: none;
+}
+
+.hero h1 {
+  margin: 0 0 20px;
+  font-size: clamp(2.6rem, 7vw, 4.6rem);
+  line-height: 1.08;
+  letter-spacing: -0.03em;
+  font-weight: 620;
+}
+
+.lede {
+  margin: 0 auto 36px;
+  max-width: 30em;
+  font-size: clamp(1rem, 2vw, 1.15rem);
+  color: var(--ink-soft);
+}
+
+.cta {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 13px 26px;
+  border-radius: 999px;
+  font-size: 0.95rem;
+  font-weight: 520;
+  text-decoration: none;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 10px 26px -10px rgba(27, 67, 50, 0.65);
+}
+
+.btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 16px 32px -12px rgba(27, 67, 50, 0.7);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+
+.btn-ghost:hover { background: var(--card); }
+
+.meta {
+  margin: 24px 0 0;
+  font-size: 0.83rem;
+  color: var(--ink-faint);
+  letter-spacing: 0.01em;
+}
+
+/* ---------- 演示 ---------- */
+
+.demo {
+  padding: 24px 0 72px;
+}
+
+.demo-frame {
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+  border: 1px solid var(--line);
+  /* GIF 有 4.9 MB，加载期间先用静态图占位，避免出现空白块 */
+  background-color: var(--card);
+  background-image: url("assets/panel.png");
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+}
+
+.demo-frame img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* ---------- 卖点 ---------- */
+
+.features {
+  display: grid;
+  gap: 20px;
+  padding: 24px 0 80px;
+}
+
+@media (min-width: 820px) {
+  .features { grid-template-columns: repeat(3, 1fr); }
+}
+
+.feature {
+  padding: 30px 26px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.tag {
+  display: inline-block;
+  margin-bottom: 16px;
+  font-size: 0.72rem;
+  font-weight: 560;
+  letter-spacing: 0.06em;
+  color: var(--accent-soft);
+  text-transform: uppercase;
+}
+
+.feature h2 {
+  margin: 0 0 12px;
+  font-size: 1.35rem;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+
+.feature p {
+  margin: 0;
+  font-size: 0.94rem;
+  color: var(--ink-soft);
+}
+
+.feature em {
+  font-style: normal;
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  font-weight: 520;
+}
+
+/* ---------- 区块通用 ---------- */
+
+.agents,
+.native,
+.install {
+  padding: 64px 0;
+  text-align: center;
+  border-top: 1px solid var(--line);
+}
+
+.agents h2,
+.native h2,
+.install h2 {
+  margin: 0 0 14px;
+  font-size: clamp(1.7rem, 4vw, 2.5rem);
+  letter-spacing: -0.02em;
+  font-weight: 600;
+}
+
+.section-lede {
+  margin: 0 auto;
+  max-width: 34em;
+  color: var(--ink-soft);
+  font-size: 1rem;
+}
+
+.fineprint {
+  margin: 28px auto 0;
+  max-width: 40em;
+  font-size: 0.83rem;
+  color: var(--ink-faint);
+}
+
+/* ---------- agent 列表 ---------- */
+
+.agent-list {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin: 32px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agent-list li {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  font-size: 0.9rem;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
+.check {
+  color: var(--accent-soft);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+/* ---------- 数字 ---------- */
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+  max-width: 620px;
+  margin: 44px auto 0;
+}
+
+.stats div {
+  padding: 20px 8px;
+}
+
+.stats dt {
+  font-size: clamp(2.2rem, 5.5vw, 3.2rem);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  color: var(--accent);
+}
+
+.stats dt span {
+  margin-left: 4px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--ink-faint);
+  letter-spacing: 0;
+}
+
+.stats dd {
+  margin: 10px 0 0;
+  font-size: 0.8rem;
+  color: var(--ink-faint);
+}
+
+/* ---------- 步骤 ---------- */
+
+.steps {
+  display: grid;
+  gap: 18px;
+  max-width: 720px;
+  margin: 36px auto 0;
+  padding: 0;
+  list-style: none;
+  text-align: left;
+  counter-reset: step;
+}
+
+@media (min-width: 820px) {
+  .steps { grid-template-columns: repeat(3, 1fr); }
+}
+
+.steps li {
+  position: relative;
+  padding: 26px 22px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  counter-increment: step;
+}
+
+.steps li::before {
+  content: counter(step);
+  display: block;
+  margin-bottom: 12px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--accent-soft);
+}
+
+.steps h3 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+
+.steps p {
+  margin: 0;
+  font-size: 0.87rem;
+  color: var(--ink-soft);
+}
+
+.steps a {
+  color: var(--accent-soft);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.steps code {
+  padding: 1px 5px;
+  font-size: 0.85em;
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  border-radius: 4px;
+}
+
+.steps-note {
+  margin: 26px 0 0;
+  font-size: 0.87rem;
+  color: var(--ink-faint);
+}
+
+/* ---------- 结尾 ---------- */
+
+.closing {
+  padding: 88px 0 96px;
+  text-align: center;
+  border-top: 1px solid var(--line);
+}
+
+.mark {
+  display: block;
+  margin: 0 auto 20px;
+  opacity: 0.92;
+}
+
+@media (prefers-color-scheme: dark) {
+  .mark { filter: invert(1) brightness(1.4); }
+}
+
+.closing h2 {
+  margin: 0 0 10px;
+  font-size: 1.6rem;
+  letter-spacing: -0.01em;
+}
+
+.closing p {
+  margin: 0 0 30px;
+  color: var(--ink-soft);
+}
+
+/* ---------- footer ---------- */
+
+footer {
+  padding: 40px 24px 56px;
+  text-align: center;
+  border-top: 1px solid var(--line);
+}
+
+footer nav {
+  display: flex;
+  gap: 24px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+footer a {
+  font-size: 0.87rem;
+  color: var(--ink-soft);
+  text-decoration: none;
+}
+
+footer a:hover { color: var(--accent); }
+
+footer p {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--ink-faint);
+}
+
+/* ---------- 淡入 ---------- */
+
+@media (prefers-reduced-motion: no-preference) {
+  .hero, .demo, .features, .agents, .native, .install, .closing {
+    animation: rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .demo { animation-delay: 0.06s; }
+  .features { animation-delay: 0.12s; }
+  .agents { animation-delay: 0.18s; }
+  .native { animation-delay: 0.24s; }
+  .install { animation-delay: 0.3s; }
+  .closing { animation-delay: 0.36s; }
+
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(14px); }
+    to { opacity: 1; transform: none; }
+  }
+}

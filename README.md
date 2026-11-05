@@ -17,7 +17,7 @@
 ### [⬇️ 下载](https://github.com/thatwzzh/sprig/releases)
 
 <p align="center">
-  <img src="assets/readme/panel.png" width="820" alt="知枝面板：左侧答案区、右侧知识树">
+  <img src="assets/readme/demo.gif" width="720" alt="知枝演示：按一下 ⌥Space，问一句，选中生词追问，知识树随之生长">
 </p>
 
 ## 这是什么

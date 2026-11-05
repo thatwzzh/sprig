@@ -17,7 +17,7 @@ Not a chat client, not a note-taking app. It does one thing: **removes the frict
 ### [⬇️ Download](https://github.com/thatwzzh/sprig/releases)
 
 <p align="center">
-  <img src="assets/readme/panel.png" width="820" alt="Sprig panel: answer pane on the left, knowledge tree on the right">
+  <img src="assets/readme/demo.gif" width="720" alt="Sprig demo: hit ⌥Space, ask, select a term to go deeper, and the tree grows">
 </p>
 
 ## What it is
