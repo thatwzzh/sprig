@@ -14,7 +14,9 @@
 
 不是聊天客户端，也不是笔记软件。它只做一件事：**把「问」和「追问」之间的摩擦降到接近零**。
 
-### [⬇️ 下载](https://github.com/thatwzzh/sprig/releases)　·　[官网](https://sprig-site.app.workbuddy.host/?sharecode=HVF3SOVDGG)
+### 下载　[🇨🇳 国内镜像](https://sprig-site.app.workbuddy.host/downloads/Sprig-latest.zip?sharecode=HVF3SOVDGG)　·　[🌍 GitHub Releases](https://github.com/thatwzzh/sprig/releases)
+
+> 国内直连镜像下载更快；GitHub 适合海外或想下历史版本。官网：https://sprig-site.app.workbuddy.host/?sharecode=HVF3SOVDGG
 
 <p align="center">
   <img src="assets/readme/demo.gif" width="720" alt="知枝演示：按一下 ⌥Space，问一句，选中生词追问，知识树随之生长">

@@ -156,6 +156,17 @@ kbd.inline {
 
 .btn-ghost:hover { background: var(--card); }
 
+.dl-count {
+  margin: 8px 0 0;
+  font-size: 0.75rem;
+  color: var(--ink-faint);
+}
+
+.dl-count strong {
+  font-weight: 620;
+  color: var(--ink-soft);
+}
+
 .meta-link {
   color: var(--ink-soft);
   text-decoration: underline;

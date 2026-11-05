@@ -14,7 +14,9 @@
 
 Not a chat client, not a note-taking app. It does one thing: **removes the friction between asking and asking deeper**.
 
-### [⬇️ Download](https://github.com/thatwzzh/sprig/releases)　·　[Website](https://sprig-site.app.workbuddy.host/?sharecode=HVF3SOVDGG)
+### Download　[🇨🇳 China mirror](https://sprig-site.app.workbuddy.host/downloads/Sprig-latest.zip?sharecode=HVF3SOVDGG)　·　[🌍 GitHub Releases](https://github.com/thatwzzh/sprig/releases)
+
+> The China mirror is faster from mainland China; GitHub is better overseas or for older versions. Website: https://sprig-site.app.workbuddy.host/?sharecode=HVF3SOVDGG
 
 <p align="center">
   <img src="assets/readme/demo.gif" width="720" alt="Sprig demo: hit ⌥Space, ask, select a term to go deeper, and the tree grows">
