@@ -14,21 +14,9 @@ Not a chat client, not a note-taking app. It does one thing: **removes the frict
 
 ### [⬇️ Download](https://github.com/thatwzzh/sprig/releases)
 
-```
-┌────────────────────────────────────────────┬──────────────────┐
-│  Ask anything…             [gemini ⌄] [▤] │  Tree         12 │
-├────────────────────────────────────────────┼──────────────────┤
-│  RAG › Hallucination                       │  ▾ RAG           │
-│  What is RAG and what problem does it solve?│   ▾ Hallucination│
-├────────────────────────────────────────────┼────── ▸ Retrieval│
-│  RAG (Retrieval-Augmented Generation)      │    ▸ Vector DB   │
-│  combines retrieval with generation…       │                  │
-│  It mitigates hallucination in LLMs.       │                  │
-│  ┈┈ select any text → [Explain] ┈┈          │                  │
-├────────────────────────────────────────────┤                  │
-│  Ask a follow-up about this card…          │                  │
-└────────────────────────────────────────────┴──────────────────┘
-```
+<p align="center">
+  <img src="assets/readme/panel.png" width="820" alt="Sprig panel: answer pane on the left, knowledge tree on the right">
+</p>
 
 ## What it is
 
