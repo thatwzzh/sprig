@@ -103,6 +103,41 @@ UI 层不直接读文件，Core 层不 import AppKit——这条边界让「解�
 三层缓冲的原因：网络 chunk 粒度是「几个字」，直接逐块改 `textStorage` 会触发高频重排；
 40ms 合并一次，视觉上仍是流式，但布局次数降一个量级。
 
+### 4.2 术语解析状态机
+
+```
+normal ──⟦──▶ inTerm ──⟧──▶ normal（产出 .term）
+                  │
+                  ├─ 换行 / 长度 > 40 / 再次遇到 ⟦ ──▶ fallback
+                  └─ 流结束 ──▶ flush() 按普通文本吐出（丢掉标记）
+
+fallback：把已缓冲内容当正文输出，并吞掉后到的 ⟧
+```
+
+不做事后 NLP 抽取的原因：多一次模型调用、多一份延迟，且流式期间术语无法「边出边可点」。
+`⟦⟧` 不用 `[[ ]]`，是为了不和 Markdown 链接语法打架。
+
+### 4.3 选词 → 子卡
+
+```
+拖选/双击选中文字
+  → textViewDidChangeSelection → updateSelectionBar()
+      选区 ≤120 字 且与答案区相交 → 浮出 [解释][追问]
+  → 解释：createChildCard(parentID: 当前卡, selection: 选中文本, question: "")
+      1) 截断栈到父卡位置（避免在祖先链之外分叉）
+      2) ContextAssembler.context(path: 祖先链, policy: .dynamic(窗口, isLocal, toolReserve))
+      3) 新卡压栈 → 流式（system(contextual) + user(上下文 + 片段)）
+  → 追问：预填「关于「…」：」，提交时同样走 createChildCard
+```
+
+### 4.4 导航
+
+`stack: [Node]` 是唯一真源：面包屑标题、问题条、答案内容都由它派生。
+跳转（树节点）时用 `CardStore.path(to:)` 重建整个栈，而不是只改当前节点——
+这样面包屑永远和内容一致。
+
+每张卡记忆自己的滚动位置（`Node.scroll`），返回父卡时恢复。
+
 ### 4.5 后台继续生成
 
 面板一次只显示一张卡，但流式请求可以有多条在跑。切换显示时不取消，转后台：
@@ -141,41 +176,6 @@ UI 层不直接读文件，Core 层不 import AppKit——这条边界让「解�
 
 **关键约束**：`renderCurrent` 用的是独立的 `replay` parser 重放 raw，
 和流式用的 `parser` 是两套状态，所以「吞掉内容」不影响已渲染的部分。
-
-### 4.2 术语解析状态机
-
-```
-normal ──⟦──▶ inTerm ──⟧──▶ normal（产出 .term）
-                  │
-                  ├─ 换行 / 长度 > 40 / 再次遇到 ⟦ ──▶ fallback
-                  └─ 流结束 ──▶ flush() 按普通文本吐出（丢掉标记）
-
-fallback：把已缓冲内容当正文输出，并吞掉后到的 ⟧
-```
-
-不做事后 NLP 抽取的原因：多一次模型调用、多一份延迟，且流式期间术语无法「边出边可点」。
-`⟦⟧` 不用 `[[ ]]`，是为了不和 Markdown 链接语法打架。
-
-### 4.3 选词 → 子卡
-
-```
-拖选/双击选中文字
-  → textViewDidChangeSelection → updateSelectionBar()
-      选区 ≤120 字 且与答案区相交 → 浮出 [解释][追问]
-  → 解释：createChildCard(parentID: 当前卡, selection: 选中文本, question: "")
-      1) 截断栈到父卡位置（避免在祖先链之外分叉）
-      2) ContextAssembler.context(path: 祖先链, policy: .dynamic(窗口, isLocal, toolReserve))
-      3) 新卡压栈 → 流式（system(contextual) + user(上下文 + 片段)）
-  → 追问：预填「关于「…」：」，提交时同样走 createChildCard
-```
-
-### 4.4 导航
-
-`stack: [Node]` 是唯一真源：面包屑标题、问题条、答案内容都由它派生。
-跳转（树节点）时用 `CardStore.path(to:)` 重建整个栈，而不是只改当前节点——
-这样面包屑永远和内容一致。
-
-每张卡记忆自己的滚动位置（`Node.scroll`），返回父卡时恢复。
 
 ## 5. 数据模型与持久化
 
@@ -247,133 +247,7 @@ token 费用都上去了，对问答的边际收益很低；下限 4000 兜住�
 明确不塞兄弟卡（同层分支会互相干扰）、不塞整棵树。
 升级路径：卡片 > 200 或出现跨分支引用 → embedding 检索 top-k；深度大且质量下降 → 每卡懒生成摘要。
 
-## 7. 窗口、焦点与跨桌面
-
-| 决策 | 选择 | 理由 |
-|---|---|---|
-| 窗口类型 | `NSPanel` + `.nonactivatingPanel` + `.borderless` | 能成为 key 接收输入，但不激活 App；`.titled` 的 28pt 标题栏会吞掉输入框点击 |
-| 层级 | `.floating` | 压住普通窗口，不盖系统弹窗 |
-| 跨桌面 | `[.managed, .fullScreenAuxiliary]` | 绑定唤出它的桌面；切桌面不跟随 |
-| 唤出迁移 | 临时 `.moveToActiveSpace` + 轮询 `isOnActiveSpace` | 在别的桌面按热键要迁过来；确认迁移完成再锁回 `.managed` |
-| 失焦 | 沉底（`level = .normal` + `orderBack`），不隐藏 | 用户切 App 时面板仍在，不打断回来继续看 |
-| 菜单跟踪 | `NSMenu.didBegin/EndTracking` 计数屏蔽 | 右键菜单期间面板会 resignKey，否则菜单和面板一起消失 |
-| 删除确认 | 自绘 `ConfirmDialog` + `NSApp.runModal` | 应用级 modal；`NSAlert` 会固定占一块图标区，去掉图标也留空白 |
-| `Esc` | 动作条 → 树 → 取消输入焦点 → 收起 | 两级语义，先失焦再关闭 |
-| `⌘C/V/X/A` | 局部 keydown 监视 + 最小主菜单 | `LSUIElement` 没有菜单栏，标准编辑动作没人转发 |
-
-`toggle()` 的语义：面板可见但 `isDemoted` 或 `!isOnActiveSpace` 时是**拉回**，不是收起。
-
-## 8. 布局系统
-
-不用 Auto Layout：流式输出时每 40ms 改一次高度，约束求解在这个频率下会抖。
-
-高度公式（无答案时只有输入区）：
-
-```
-total = inputHeight(46…96)
-      + breadcrumb(28) + questionHeight(22…46) + 1
-      + answerHeight(30…420) + 1
-      + bottomHeight(40…84)
-```
-
-- 左侧问答区固定 `680`；展开树时窗口加宽 `264`，问答区宽度不变。
-- 文本高度一律用 `NSLayoutManager.usedRect(for:)` 实测，再 `setFrame`。
-- 圆角：`PanelContentView`（普通 `NSView`）负责 `cornerRadius + masksToBounds`，
-  `NSVisualEffectView` 降级为铺满的子视图并加 `maskImage`——它的背景层不跟随 `layer.cornerRadius`。
-
-## 9. 并发模型
-
-- UI 全部 `@MainActor`；`PanelController` 是唯一状态所有者。
-- 流式用 `Task { @MainActor ... }`，`for try await` 挂起时不阻塞主线程。
-- 流式归属：每条流式任务带一个 `owner: UUID`（卡片 id）。渲染与否由
-  「owner 是不是当前显示的卡」决定，不是由「有没有 streamTask」决定——
-  后者只能记一条，多任务并行时会丢。
-- 取消：只有「追问子卡 / 清空面板」会 `cancelStreaming()`；
-  切换显示走 `detachCurrentStreaming()`，任务继续在后台跑完并落库。
-- 瞬时故障：TLS 握手失败 / 连接中断会先 `HTTPClient.resetSession()` 再重试——
-  `URLSession` 的连接池会缓存坏掉的 TLS 会话，不换池重试也是撞同一条。
-- `CardStore` 是 `actor`，调用方 `await`；写盘在 actor 内串行。
-- 树刷新是异步的：`reload()` 拉全量卡片后重建 `TreeNode`，卡片量小，不值得做增量。
-
-## 10. 关键取舍
-
-| 场景 | 选了 | 没选 | 原因 |
-|---|---|---|---|
-| 答案渲染 | `NSTextView` | SwiftUI `Text` | 需要原生拖选、选区回调、自定义命中 |
-| 术语抽取 | prompt 内联标记 | 事后 NLP/小模型 | 省一次调用，流式期间即可点击 |
-| 卡片存储 | JSON | GRDB/FTS5 | 量级小，接口已预留替换 |
-| 确认框 | 内嵌条 | `NSAlert` | sheet 抢 key window、露直角 |
-| 划词入口 | 面板内选词 | 全局 AX 取词 + OCR | 省掉辅助功能权限与三级降级链 |
-| 输入语义 | 顶部=新根卡，底部=子卡 | 统一一个输入框 | 两个动作语义不同，混在一起用户无法预测 |
-| 流式切换 | 转后台继续跑 | 直接取消 | 半截答案没有价值，而且用户看不出是被打断的 |
-| 搜索结果 | 折叠成一行 + 点开菜单 | 平铺标题和域名 | 平铺会把正文切碎，读起来很吵 |
-| 免费模型 | 内置智谱一家，其余走自定义接入 | 内置一堆免费通道 | 免费政策变得比代码快，内置多了都在维护别人的限流 |
-
-## 11. 实现约束（每一条在代码里都有注释）
-
-1. **`NSVisualEffectView` 的圆角要靠外层裁切**：背景层是方的，直接设 `cornerRadius` 会露四角。外层容器裁切 + `maskImage`。
-2. **确认框自绘，不用 `NSAlert`**：`icon = nil` 会回退到 App 图标，空图仍占一块图标区。用 `ConfirmDialog` + `NSApp.runModal`，level 提到 `.modalPanel`（否则被 `.floating` 面板压住）。
-3. **菜单跟踪期间屏蔽 `resignKey`**：`NSMenu` 打开会让面板失焦收起，靠 `didBegin/EndTracking` 计数判断。
-4. **`NSOutlineView` 作 `documentView` 时手算宽高**：frame 不会自动跟随 scroll view。
-5. **树宽按 clip 宽度夹住**：`NSScrollView` 会把 documentView 撑宽 32pt，导致横向滚动和行尾按钮被裁。在 `frame` / `setFrameSize` 两处夹宽度，按钮按 `visibleRightEdge` 定位。
-6. **面板用 `.borderless`**：`.titled` 的标题栏会吞掉顶部 28pt 的点击（变成拖拽区）。
-7. **IME 候选框位置手算**：非激活面板里中文候选框会飘，覆写 `firstRect(forCharacterRange:)` 换算屏幕坐标。
-8. **Ollama 显式关思考链**：qwen3 默认开思维链，`content` 为空、`thinking` 逐字输出，所以请求带 `"think": false`。
-9. **Ollama 显式限 `num_ctx`**：默认窗口会让 9B-q8 撑到 20GB、约 30s/token，固定 `num_ctx: 8192`。
-10. **构建要 `--disable-sandbox`**：SwiftPM 调 `sandbox-exec` 被系统拒绝，`make-app.sh` 里已带。
-11. **菜单栏图标依赖系统授权**：系统设置 → 菜单栏 → 「允许在菜单栏中显示」，按 bundle id 记录。关掉后 `NSStatusItem` 失效，`isVisible = true` 会被重置，**app 端没有 API 能自行恢复**。
-12. **`NSTextContainer` 宽度交给 `widthTracksTextView`**：手动设成 `bounds.width` 会让文字右侧多出 16pt、画到面板外。诊断看 `--selftest` 打印的 `textContainer.size`，正确值是 `frame.width - 32`。
-13. **`openAICompatible` 是筐，按 `baseURL` 分流**：`fetchFreeModels` 与路径拼接都要区分 `bigmodel`（`/api/paas/v4` 不能再补 `/v1`），用 `hasVersionPrefix` 识别 `/v1` `/v3` `/v4`。
-14. **「读表单再执行」前先 `persistXxx()`**：`controlTextDidEndEditing` 要等失焦才触发，而按钮 action 先跑，会读到旧值再把空值写回输入框。
-15. **判断「有没有内容」看缓冲，不看 `stack.raw`**：后台跑的那张卡 `stack.raw` 一定是空的。
-16. **免费模型限流是产品约束**：智谱 GLM-4.7-Flash 成功率约 1/3，app 只做重试 + 换模型，额度没了只能等。
-
-## 12. 测试与调试
-
-`swift test --disable-sandbox` 覆盖三块纯逻辑（16 项）：
-
-- `TermParser`：分片、跨块标记、未闭合持有、换行/超长降级、空术语、多术语。
-- `CardStore`：树操作、路径、重命名、级联删除、JSON 往返。
-- `ContextAssembler`：按窗口动态算预算、工具预留挤占祖先、句子边界截断、由近到远分配。
-
-UI 无法截图时的替代方案（本机没有屏幕录制权限）：
-
-| 参数 | 验证内容 |
-|---|---|
-| `--selftest` | 面板尺寸、各区块 frame、选区动作条、`⌘C` 是否真的进了剪贴板 |
-| `--tree-dump [--tree-filter 词]` | 树的行数/列宽/单元格坐标、搜索命中集合与标记点 |
-| `--headless "问题"` | provider + 解析器全链路（逐段打印 TEXT/TERM） |
-| `--headless-child` | 子卡上下文 prompt 的实际输出 |
-
-## 13. 扩展点
-
-- **新增 provider**：实现 `LLMProvider`（`id` + `displayName` + `stream(messages:)`，本机推理再盖 `isLocal`），
-  在 `ProviderConfig.makeProvider()` 里加一个分支；配置、UI、菜单都不必动。
-  上下文策略按 `provider.isLocal` 自动切换（`ContextAssembler.Policy.forLocal`）。
-- **换存储**：只改 `CardStore` 的七个方法实现。
-- **加检索**：卡片树已经是 `parentID` 结构，加 embedding 字段 + top-k 检索，接在 `ContextAssembler` 之前。
-- **加复习**：`AnswerCard` 是纯数据，可外挂 `dueAt/interval` 而不影响现有树。
-- **加导出**：`CardStore.all()` + `path(to:)` 已能还原任意子树。
-
-## 14. 文件依赖
-
-```
-main.swift
- └─ AppDelegate ─┬─ KeyboardShortcuts（热键）
-                 ├─ PanelController ─┬─ PanelContentView ─┬─ BreadcrumbBar
-                 │                   │                    ├─ QuestionHeaderView
-                 │                   │                    ├─ AnswerTextView
-                 │                   │                    ├─ InputTextView ×2
-                 │                   │                    ├─ SelectionActionBar
-                 │                   │                    └─ KnowledgeTreeView
-                 │                   ├─ CardStore (actor)
-                 │                   └─ Settings ── ProviderConfig ──┬─ OllamaProvider
-                 │                                                  ├─ OpenAICompatibleProvider
-                 │                                                  └─ AcpClient（外部进程）
-                 └─ SettingsWindowController
-```
-
-## 15. ACP agent 接入
+## 7. ACP agent 接入
 
 面板可以把问题转给一个外部 ACP agent（`AcpClient`），进程按「启动命令 + 工作目录」复用，
 每一问单独 `session/new`。
@@ -401,7 +275,10 @@ claude / codex / gemini 这类 agent 用**正常 HOME**：它们的登录态本�
 切换先发 `session/set_config_option`，被拒（`-32602`，codex-acp 就是这样）再退到 legacy 的 `session/set_model`。
 每一问都是新会话，所以选中的模型在每轮 `session/prompt` 之前要重设一次。
 
-**Markdown 渲染**：`MarkdownLite` 解析（标题/列表/引用/代码块/表格/行内样式）→ `AnswerTextView.renderRich` 排版。
+
+## 8. 渲染管线
+
+### Markdown 与图表：`MarkdownLite` 解析（标题/列表/引用/代码块/表格/行内样式）→ `AnswerTextView.renderRich` 排版。
 表格画成图片再挂 `NSTextAttachment`（`TableImage`）：`NSTextTable` 的行高和边框不可控，图片则完全可算，
 图表同理（`ChartImage`：柱状/折线，步长取 1/1.2/1.5/2/2.5/3/4/5/6/8×10ⁿ，避免 12.5 这种刻度）。
 ```html 块走 `HtmlSnapshot`：WKWebView 离屏加载（塞进 borderless window，否则不排版）→ 量 scrollHeight →
@@ -450,3 +327,122 @@ WorkBuddy 自带 CLI、以及 `~/.npm/_npx` 里已经下过的包（claude / cod
 对话窗口的模型菜单直接列出所有已配置 agent，选谁就用谁。
 
 Agent 模式下**联网搜索开关禁用**（面板上的和设置页的都是）：联不联网由 agent 自己决定。
+
+## 9. 窗口、焦点与跨桌面
+
+| 决策 | 选择 | 理由 |
+|---|---|---|
+| 窗口类型 | `NSPanel` + `.nonactivatingPanel` + `.borderless` | 能成为 key 接收输入，但不激活 App；`.titled` 的 28pt 标题栏会吞掉输入框点击 |
+| 层级 | `.floating` | 压住普通窗口，不盖系统弹窗 |
+| 跨桌面 | `[.managed, .fullScreenAuxiliary]` | 绑定唤出它的桌面；切桌面不跟随 |
+| 唤出迁移 | 临时 `.moveToActiveSpace` + 轮询 `isOnActiveSpace` | 在别的桌面按热键要迁过来；确认迁移完成再锁回 `.managed` |
+| 失焦 | 沉底（`level = .normal` + `orderBack`），不隐藏 | 用户切 App 时面板仍在，不打断回来继续看 |
+| 菜单跟踪 | `NSMenu.didBegin/EndTracking` 计数屏蔽 | 右键菜单期间面板会 resignKey，否则菜单和面板一起消失 |
+| 删除确认 | 自绘 `ConfirmDialog` + `NSApp.runModal` | 应用级 modal；`NSAlert` 会固定占一块图标区，去掉图标也留空白 |
+| `Esc` | 动作条 → 树 → 取消输入焦点 → 收起 | 两级语义，先失焦再关闭 |
+| `⌘C/V/X/A` | 局部 keydown 监视 + 最小主菜单 | `LSUIElement` 没有菜单栏，标准编辑动作没人转发 |
+
+`toggle()` 的语义：面板可见但 `isDemoted` 或 `!isOnActiveSpace` 时是**拉回**，不是收起。
+## 10. 布局系统
+
+不用 Auto Layout：流式输出时每 40ms 改一次高度，约束求解在这个频率下会抖。
+
+高度公式（无答案时只有输入区）：
+
+```
+total = inputHeight(46…96)
+      + breadcrumb(28) + questionHeight(22…46) + 1
+      + answerHeight(30…420) + 1
+      + bottomHeight(40…84)
+```
+
+- 左侧问答区固定 `680`；展开树时窗口加宽 `264`，问答区宽度不变。
+- 文本高度一律用 `NSLayoutManager.usedRect(for:)` 实测，再 `setFrame`。
+- 圆角：`PanelContentView`（普通 `NSView`）负责 `cornerRadius + masksToBounds`，
+  `NSVisualEffectView` 降级为铺满的子视图并加 `maskImage`——它的背景层不跟随 `layer.cornerRadius`。
+## 11. 并发模型
+
+- UI 全部 `@MainActor`；`PanelController` 是唯一状态所有者。
+- 流式用 `Task { @MainActor ... }`，`for try await` 挂起时不阻塞主线程。
+- 流式归属：每条流式任务带一个 `owner: UUID`（卡片 id）。渲染与否由
+  「owner 是不是当前显示的卡」决定，不是由「有没有 streamTask」决定——
+  后者只能记一条，多任务并行时会丢。
+- 取消：只有「追问子卡 / 清空面板」会 `cancelStreaming()`；
+  切换显示走 `detachCurrentStreaming()`，任务继续在后台跑完并落库。
+- 瞬时故障：TLS 握手失败 / 连接中断会先 `HTTPClient.resetSession()` 再重试——
+  `URLSession` 的连接池会缓存坏掉的 TLS 会话，不换池重试也是撞同一条。
+- `CardStore` 是 `actor`，调用方 `await`；写盘在 actor 内串行。
+- 树刷新是异步的：`reload()` 拉全量卡片后重建 `TreeNode`，卡片量小，不值得做增量。
+## 12. 关键取舍
+
+| 场景 | 选了 | 没选 | 原因 |
+|---|---|---|---|
+| 答案渲染 | `NSTextView` | SwiftUI `Text` | 需要原生拖选、选区回调、自定义命中 |
+| 术语抽取 | prompt 内联标记 | 事后 NLP/小模型 | 省一次调用，流式期间即可点击 |
+| 卡片存储 | JSON | GRDB/FTS5 | 量级小，接口已预留替换 |
+| 确认框 | 内嵌条 | `NSAlert` | sheet 抢 key window、露直角 |
+| 划词入口 | 面板内选词 | 全局 AX 取词 + OCR | 省掉辅助功能权限与三级降级链 |
+| 输入语义 | 顶部=新根卡，底部=子卡 | 统一一个输入框 | 两个动作语义不同，混在一起用户无法预测 |
+| 流式切换 | 转后台继续跑 | 直接取消 | 半截答案没有价值，而且用户看不出是被打断的 |
+| 搜索结果 | 折叠成一行 + 点开菜单 | 平铺标题和域名 | 平铺会把正文切碎，读起来很吵 |
+| 免费模型 | 内置智谱一家，其余走自定义接入 | 内置一堆免费通道 | 免费政策变得比代码快，内置多了都在维护别人的限流 |
+## 13. 实现约束（每一条在代码里都有注释）
+
+1. **`NSVisualEffectView` 的圆角要靠外层裁切**：背景层是方的，直接设 `cornerRadius` 会露四角。外层容器裁切 + `maskImage`。
+2. **确认框自绘，不用 `NSAlert`**：`icon = nil` 会回退到 App 图标，空图仍占一块图标区。用 `ConfirmDialog` + `NSApp.runModal`，level 提到 `.modalPanel`（否则被 `.floating` 面板压住）。
+3. **菜单跟踪期间屏蔽 `resignKey`**：`NSMenu` 打开会让面板失焦收起，靠 `didBegin/EndTracking` 计数判断。
+4. **`NSOutlineView` 作 `documentView` 时手算宽高**：frame 不会自动跟随 scroll view。
+5. **树宽按 clip 宽度夹住**：`NSScrollView` 会把 documentView 撑宽 32pt，导致横向滚动和行尾按钮被裁。在 `frame` / `setFrameSize` 两处夹宽度，按钮按 `visibleRightEdge` 定位。
+6. **面板用 `.borderless`**：`.titled` 的标题栏会吞掉顶部 28pt 的点击（变成拖拽区）。
+7. **IME 候选框位置手算**：非激活面板里中文候选框会飘，覆写 `firstRect(forCharacterRange:)` 换算屏幕坐标。
+8. **Ollama 显式关思考链**：qwen3 默认开思维链，`content` 为空、`thinking` 逐字输出，所以请求带 `"think": false`。
+9. **Ollama 显式限 `num_ctx`**：默认窗口会让 9B-q8 撑到 20GB、约 30s/token，固定 `num_ctx: 8192`。
+10. **构建要 `--disable-sandbox`**：SwiftPM 调 `sandbox-exec` 被系统拒绝，`make-app.sh` 里已带。
+11. **菜单栏图标依赖系统授权**：系统设置 → 菜单栏 → 「允许在菜单栏中显示」，按 bundle id 记录。关掉后 `NSStatusItem` 失效，`isVisible = true` 会被重置，**app 端没有 API 能自行恢复**。
+12. **`NSTextContainer` 宽度交给 `widthTracksTextView`**：手动设成 `bounds.width` 会让文字右侧多出 16pt、画到面板外。诊断看 `--selftest` 打印的 `textContainer.size`，正确值是 `frame.width - 32`。
+13. **`openAICompatible` 是筐，按 `baseURL` 分流**：`fetchFreeModels` 与路径拼接都要区分 `bigmodel`（`/api/paas/v4` 不能再补 `/v1`），用 `hasVersionPrefix` 识别 `/v1` `/v3` `/v4`。
+14. **「读表单再执行」前先 `persistXxx()`**：`controlTextDidEndEditing` 要等失焦才触发，而按钮 action 先跑，会读到旧值再把空值写回输入框。
+15. **判断「有没有内容」看缓冲，不看 `stack.raw`**：后台跑的那张卡 `stack.raw` 一定是空的。
+16. **免费模型限流是产品约束**：智谱 GLM-4.7-Flash 成功率约 1/3，app 只做重试 + 换模型，额度没了只能等。
+## 14. 测试与调试
+
+`swift test --disable-sandbox` 覆盖三块纯逻辑（16 项）：
+
+- `TermParser`：分片、跨块标记、未闭合持有、换行/超长降级、空术语、多术语。
+- `CardStore`：树操作、路径、重命名、级联删除、JSON 往返。
+- `ContextAssembler`：按窗口动态算预算、工具预留挤占祖先、句子边界截断、由近到远分配。
+
+UI 无法截图时的替代方案（本机没有屏幕录制权限）：
+
+| 参数 | 验证内容 |
+|---|---|
+| `--selftest` | 面板尺寸、各区块 frame、选区动作条、`⌘C` 是否真的进了剪贴板 |
+| `--tree-dump [--tree-filter 词]` | 树的行数/列宽/单元格坐标、搜索命中集合与标记点 |
+| `--headless "问题"` | provider + 解析器全链路（逐段打印 TEXT/TERM） |
+| `--headless-child` | 子卡上下文 prompt 的实际输出 |
+## 15. 扩展点
+
+- **新增 provider**：实现 `LLMProvider`（`id` + `displayName` + `stream(messages:)`，本机推理再盖 `isLocal`），
+  在 `ProviderConfig.makeProvider()` 里加一个分支；配置、UI、菜单都不必动。
+  上下文策略按 `provider.isLocal` 自动切换（`ContextAssembler.Policy.forLocal`）。
+- **换存储**：只改 `CardStore` 的七个方法实现。
+- **加检索**：卡片树已经是 `parentID` 结构，加 embedding 字段 + top-k 检索，接在 `ContextAssembler` 之前。
+- **加复习**：`AnswerCard` 是纯数据，可外挂 `dueAt/interval` 而不影响现有树。
+- **加导出**：`CardStore.all()` + `path(to:)` 已能还原任意子树。
+## 16. 文件依赖
+
+```
+main.swift
+ └─ AppDelegate ─┬─ KeyboardShortcuts（热键）
+                 ├─ PanelController ─┬─ PanelContentView ─┬─ BreadcrumbBar
+                 │                   │                    ├─ QuestionHeaderView
+                 │                   │                    ├─ AnswerTextView
+                 │                   │                    ├─ InputTextView ×2
+                 │                   │                    ├─ SelectionActionBar
+                 │                   │                    └─ KnowledgeTreeView
+                 │                   ├─ CardStore (actor)
+                 │                   └─ Settings ── ProviderConfig ──┬─ OllamaProvider
+                 │                                                  ├─ OpenAICompatibleProvider
+                 │                                                  └─ AcpClient（外部进程）
+                 └─ SettingsWindowController
+```
