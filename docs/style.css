@@ -130,6 +130,13 @@ kbd.inline {
   transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
 }
 
+.dl-version {
+  margin-left: 7px;
+  font-size: 0.74em;
+  font-weight: 400;
+  opacity: 0.72;
+}
+
 .btn-primary {
   background: var(--accent);
   color: #fff;
@@ -148,6 +155,14 @@ kbd.inline {
 }
 
 .btn-ghost:hover { background: var(--card); }
+
+.meta-link {
+  color: var(--ink-soft);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.meta-link:hover { color: var(--accent); }
 
 .meta {
   margin: 16px 0 0;
