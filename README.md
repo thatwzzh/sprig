@@ -8,19 +8,16 @@
 [![License](https://img.shields.io/github/license/thatwzzh/sprig?style=flat-square)](LICENSE)
 [![Platform](https://img.shields.io/badge/macOS-14%2B-blue?style=flat-square)](https://www.apple.com/macos/)
 
-**简体中文** | [English](README.en.md)
-
 **按一下 `⌥Space`，问一句，答案就出来了。答案里任何文字都能选中「解释」，每次解释都在右侧知识树里长出一张子卡——知识像枝一样长，所以叫「知枝」。**
 
 不是聊天客户端，也不是笔记软件。它只做一件事：**把「问」和「追问」之间的摩擦降到接近零**。
 
 ### 下载　[🇨🇳 国内镜像](https://sprig-site.app.workbuddy.host/downloads/Sprig-latest.zip?sharecode=HVF3SOVDGG)　·　[🌍 GitHub Releases](https://github.com/thatwzzh/sprig/releases)
 
-> 国内直连镜像下载更快；GitHub 适合海外或想下历史版本。官网：https://sprig-site.app.workbuddy.host/?sharecode=HVF3SOVDGG
+> 国内直连更快；GitHub 适合海外或想下历史版本。也可以在[官网](https://sprig-site.app.workbuddy.host/?sharecode=HVF3SOVDGG)看演示。
 
 <p align="center">
   <img src="assets/readme/demo.gif" width="720" alt="知枝演示：按一下 ⌥Space，问一句，选中生词追问，知识树随之生长">
-  <br><sub>GIF 压过，小字会糊 · <a href="https://sprig-site.app.workbuddy.host/?sharecode=HVF3SOVDGG">看高清视频版</a></sub>
 </p>
 
 ## 这是什么

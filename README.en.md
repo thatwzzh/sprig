@@ -8,19 +8,16 @@
 [![License](https://img.shields.io/github/license/thatwzzh/sprig?style=flat-square)](LICENSE)
 [![Platform](https://img.shields.io/badge/macOS-14%2B-blue?style=flat-square)](https://www.apple.com/macos/)
 
-[简体中文](README.md) | **English**
-
 **Hit `⌥Space`, ask a question, get an answer. Select any text in that answer and hit "Explain" — a child card grows in the knowledge tree on the right. Knowledge branches out like a sprig, which is where the name comes from.**
 
 Not a chat client, not a note-taking app. It does one thing: **removes the friction between asking and asking deeper**.
 
 ### Download　[🇨🇳 China mirror](https://sprig-site.app.workbuddy.host/downloads/Sprig-latest.zip?sharecode=HVF3SOVDGG)　·　[🌍 GitHub Releases](https://github.com/thatwzzh/sprig/releases)
 
-> The China mirror is faster from mainland China; GitHub is better overseas or for older versions. Website: https://sprig-site.app.workbuddy.host/?sharecode=HVF3SOVDGG
+> The China mirror is faster from mainland China; GitHub is better overseas or for older versions. You can also watch the demo on the [website](https://sprig-site.app.workbuddy.host/?sharecode=HVF3SOVDGG).
 
 <p align="center">
   <img src="assets/readme/demo.gif" width="720" alt="Sprig demo: hit ⌥Space, ask, select a term to go deeper, and the tree grows">
-  <br><sub>GIF is compressed, small text blurs · <a href="https://sprig-site.app.workbuddy.host/?sharecode=HVF3SOVDGG">watch the HD video</a></sub>
 </p>
 
 ## What it is
