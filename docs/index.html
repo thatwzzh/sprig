@@ -33,7 +33,7 @@
       </a>
     </div>
     <p class="meta">macOS 14+ · 15 MB · MIT · 免费</p>
-    <p class="dl-count">官网 <strong data-downloads>0</strong> 次 · GitHub <strong data-gh-downloads>11</strong> 次下载 · <a class="meta-link" href="https://github.com/thatwzzh/sprig/releases">历史版本</a></p>
+    <p class="dl-count">已下载 <strong data-downloads>11</strong> 次<span class="dl-detail">（官网 <span data-mirror>0</span> · GitHub <span data-gh-downloads>11</span>）</span> · <a class="meta-link" href="https://github.com/thatwzzh/sprig/releases">历史版本</a></p>
   </section>
 
   <!-- 演示 -->
@@ -193,8 +193,16 @@ HTTP 缓存策略.md</code></pre>
       .then(function (res) {
         var n = res && res.count;
         if (typeof n !== 'number') return;
+
+        // GitHub 那份由 sync-release.sh 写进 data-gh-downloads，读出来一起加
+        var ghEl = document.querySelector('[data-gh-downloads]');
+        var gh = parseInt((ghEl && ghEl.textContent) || '0', 10) || 0;
+
+        var mirrorEl = document.querySelector('[data-mirror]');
+        if (mirrorEl) mirrorEl.textContent = n.toLocaleString('zh-CN');
+
         document.querySelectorAll('[data-downloads]').forEach(function (el) {
-          el.textContent = n.toLocaleString('zh-CN');
+          el.textContent = (n + gh).toLocaleString('zh-CN');
         });
       })
       .catch(function () { /* 计数失败不影响页面 */ });

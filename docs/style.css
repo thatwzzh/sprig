@@ -162,6 +162,11 @@ kbd.inline {
   color: var(--ink-faint);
 }
 
+.dl-detail {
+  color: var(--ink-faint);
+  font-size: 0.94em;
+}
+
 .dl-count strong {
   font-weight: 620;
   color: var(--ink-soft);
