@@ -17,7 +17,9 @@ Not a chat client, not a note-taking app. It does one thing: **removes the frict
 > The China mirror is faster from mainland China; GitHub is better overseas or for older versions. You can also watch the demo on the [website](https://sprig-site.app.workbuddy.host/?sharecode=HVF3SOVDGG).
 
 <p align="center">
-  <img src="assets/readme/demo.gif" width="720" alt="Sprig demo: hit ⌥Space, ask, select a term to go deeper, and the tree grows">
+  <a href="https://sprig-site.app.workbuddy.host/?sharecode=HVF3SOVDGG">
+    <img src="assets/readme/demo-poster.png" width="760" alt="Click to watch the 44-second demo">
+  </a>
 </p>
 
 ## What it is

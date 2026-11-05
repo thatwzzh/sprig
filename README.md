@@ -17,7 +17,9 @@
 > 国内直连更快；GitHub 适合海外或想下历史版本。也可以在[官网](https://sprig-site.app.workbuddy.host/?sharecode=HVF3SOVDGG)看演示。
 
 <p align="center">
-  <img src="assets/readme/demo.gif" width="720" alt="知枝演示：按一下 ⌥Space，问一句，选中生词追问，知识树随之生长">
+  <a href="https://sprig-site.app.workbuddy.host/?sharecode=HVF3SOVDGG">
+    <img src="assets/readme/demo-poster.png" width="760" alt="点击观看 44 秒演示">
+  </a>
 </p>
 
 ## 这是什么

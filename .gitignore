@@ -64,3 +64,6 @@ temp/
 
 # 应用发布标记（WorkBuddy 内部使用，不入库）
 .wbapp_*.genie
+
+# 临时构建产物
+.tmp/
