@@ -60,7 +60,7 @@ public enum ModelProbe {
                              session: URLSession = HTTPClient.streaming) async -> [ProbeResult] {
         guard !models.isEmpty else { return [] }
 
-        // 目前只有 OpenAI 兼容能这样探（Gemini 的接口形状不同，单独处理不划算）
+        // 只有 OpenAI 兼容能这样探（接口形状不同的服务，单独实现不划算）
         guard config.kind == .openAICompatible else {
             return models.map { ProbeResult(model: $0, ok: false, failure: .unsupported) }
         }

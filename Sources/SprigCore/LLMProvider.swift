@@ -1,6 +1,6 @@
 import Foundation
 
-/// 一个可插拔的模型提供方。UI 只依赖这个协议，加 Ollama / Gemini 都只是新增文件。
+/// 一个可插拔的模型提供方。UI 只依赖这个协议，接一家新服务就是新增一个文件。
 public protocol LLMProvider: Sendable {
     var id: String { get }
     var displayName: String { get }
@@ -15,7 +15,7 @@ public extension LLMProvider {
     var isLocal: Bool { false }
 
     /// 默认实现：忽略 tools，把文本流包成事件流。
-    /// 这样 Ollama / Gemini 不用改，未接工具时行为与之前完全一致。
+    /// 这样没接工具调用的 provider 不用改，行为与之前完全一致。
     func streamEvents(messages: [ChatMessage],
                       tools: [ToolDefinition]) -> AsyncThrowingStream<ChatEvent, Error> {
         AsyncThrowingStream { continuation in
@@ -69,7 +69,7 @@ public enum LLMError: LocalizedError, Sendable {
         case 401, 403:
             return "鉴权失败（HTTP \(status)）：API Key 无效，或这条 Key 没有该模型的权限。"
         case 404:
-            return "接口或模型不存在（HTTP 404）。Gemini 常见于模型已下线（去 AI Studio 看当前模型名）；"
+            return "接口或模型不存在（HTTP 404）。常见于模型已下线或名字写错（去服务商控制台看当前模型名）；"
                 + "其他服务检查 Base URL 是否该以 /v1 结尾。"
         case 429:
             return "被限流了（HTTP 429）：免费层有每分钟次数限制，等一分钟再问。"

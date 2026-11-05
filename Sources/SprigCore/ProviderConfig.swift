@@ -62,7 +62,7 @@ public struct ProviderConfig: Codable, Identifiable, Sendable, Equatable {
     public static let builtinZhipuID = UUID(uuidString: "5A1B0C00-0000-4000-8000-00000000D004")!
 
     public var id: UUID
-    /// 用户自己起的名字，例如「我的 Gemini」「公司网关」
+    /// 用户自己起的名字，例如「公司网关」「本地千问」
     public var name: String
     public var kind: Kind
     public var baseURL: String
