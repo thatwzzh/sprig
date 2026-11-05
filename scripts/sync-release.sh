@@ -89,7 +89,7 @@ if [ -f "$PAGE" ]; then
     if [ -n "${COUNT:-}" ]; then
         /usr/bin/sed -i '' \
             -e "s|<span class=\"dl-version\">[^<]*</span>|<span class=\"dl-version\">$TAG</span>|" \
-            -e "s|<strong data-downloads>[^<]*</strong>|<strong data-downloads>$COUNT</strong>|" \
+            -e "s|<strong data-gh-downloads>[^<]*</strong>|<strong data-gh-downloads>$COUNT</strong>|" \
             "$PAGE"
         echo "✓ 页面已更新：版本 ${TAG}，下载 ${COUNT} 次"
     else
