@@ -170,7 +170,7 @@ HTTP 缓存策略.md</code></pre>
 
 
 <script>
-// 云服务：初始化一次，读下载计数，点下载时记一条
+// 下载计数：云服务（镜像）+ GitHub Releases（实时拉）+ 点下载时打点
 (function () {
   var cfg = {
     endpoint: "https://sprig-site.app.workbuddy.host",
@@ -178,37 +178,73 @@ HTTP 缓存策略.md</code></pre>
     oauthRelayBaseUrl: "https://www.workbuddy.cn/v2/as/genie-baas/oauth"
   };
 
-  function init() {
-    if (!window.WorkBuddyCloud) return null;
+  // GitHub 那份 HTML 里有静态兜底值（sync-release.sh 写的），
+  // API 拿到后覆盖；拿不到就继续用兜底值。
+  var state = { mirror: 0, gh: 0 };
+
+  function readInitialGH() {
+    var el = document.querySelector('[data-gh-downloads]');
+    var n = parseInt((el && el.textContent) || '0', 10);
+    return isNaN(n) ? 0 : n;
+  }
+
+  function render() {
+    document.querySelectorAll('[data-mirror]').forEach(function (el) {
+      el.textContent = state.mirror.toLocaleString('zh-CN');
+    });
+    document.querySelectorAll('[data-gh-downloads]').forEach(function (el) {
+      el.textContent = state.gh.toLocaleString('zh-CN');
+    });
+    document.querySelectorAll('[data-downloads]').forEach(function (el) {
+      el.textContent = (state.mirror + state.gh).toLocaleString('zh-CN');
+    });
+  }
+
+  // GitHub Releases 的下载数只能从 API 拿。没有 token，60 次/小时/IP，
+  // 超了就静默用兜底值——计数不准总比页面报错好。
+  function loadGitHub() {
+    fetch('https://api.github.com/repos/thatwzzh/sprig/releases?per_page=100', {
+      headers: { 'Accept': 'application/vnd.github+json' }
+    })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (list) {
+        if (!Array.isArray(list)) return;
+        var total = list.reduce(function (sum, rel) {
+          var assets = rel.assets || [];
+          return sum + assets.reduce(function (a, x) {
+            return a + (x.download_count || 0);
+          }, 0);
+        }, 0);
+        state.gh = total;
+        render();
+      })
+      .catch(function () { /* 保持兜底值 */ });
+  }
+
+  function initCloud(done) {
+    if (!window.WorkBuddyCloud) { done(null); return; }
     try {
-      return window.WorkBuddyCloud.createWorkBuddyCloud(cfg);
+      done(window.WorkBuddyCloud.createWorkBuddyCloud(cfg));
     } catch (e) {
-      return null;
+      done(null);
     }
   }
 
-  function refreshCount(cloud) {
+  function loadMirror(cloud) {
+    if (!cloud) return;
     cloud.database.from('download_events')
       .select('*', { count: 'exact', head: true })
       .then(function (res) {
         var n = res && res.count;
         if (typeof n !== 'number') return;
-
-        // GitHub 那份由 sync-release.sh 写进 data-gh-downloads，读出来一起加
-        var ghEl = document.querySelector('[data-gh-downloads]');
-        var gh = parseInt((ghEl && ghEl.textContent) || '0', 10) || 0;
-
-        var mirrorEl = document.querySelector('[data-mirror]');
-        if (mirrorEl) mirrorEl.textContent = n.toLocaleString('zh-CN');
-
-        document.querySelectorAll('[data-downloads]').forEach(function (el) {
-          el.textContent = (n + gh).toLocaleString('zh-CN');
-        });
+        state.mirror = n;
+        render();
       })
       .catch(function () { /* 计数失败不影响页面 */ });
   }
 
   function trackClick(cloud) {
+    if (!cloud) return;
     var tag = document.querySelector('.dl-version');
     var version = tag ? tag.textContent.trim() : '';
     cloud.database.from('download_events')
@@ -218,11 +254,16 @@ HTTP 缓存策略.md</code></pre>
   }
 
   function boot() {
-    var cloud = init();
-    if (!cloud) return;
-    refreshCount(cloud);
-    document.querySelectorAll('a[download]').forEach(function (a) {
-      a.addEventListener('click', function () { trackClick(cloud); });
+    state.gh = readInitialGH();
+    render();
+
+    loadGitHub();
+
+    initCloud(function (cloud) {
+      loadMirror(cloud);
+      document.querySelectorAll('a[download]').forEach(function (a) {
+        a.addEventListener('click', function () { trackClick(cloud); });
+      });
     });
   }
 
