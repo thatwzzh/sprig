@@ -283,6 +283,8 @@ p code, li code, dd code, summary code, .chapter-lede code { white-space: nowrap
 }
 
 .dl-count {
+  /* 数据没到之前先藏着，避免先显示静态快照再跳数 */
+  visibility: hidden;
   margin-top: 9px;
   font-size: 12.5px;
   letter-spacing: 0.01em;
@@ -1489,4 +1491,14 @@ footer {
   .path-card code { flex-basis: 100%; }
   .copy-btn { margin-left: auto; }
   .modal-close { top: -40px; right: -2px; }
+}
+
+.dl-count.is-ready {
+  visibility: visible;
+  animation: fadeCount 0.25s ease-out;
+}
+
+@keyframes fadeCount {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }

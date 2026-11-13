@@ -502,7 +502,9 @@
 
   // GitHub 那份 HTML 里有静态兜底值（sync-release.sh 写的），
   // API 拿到后覆盖；拿不到就继续用兜底值。
-  var state = { mirror: 0, gh: 0 };
+  // null 表示「还没拿到」，和「拿到了 0」区分开——
+  // 之前初始写 0，导致先渲染静态快照、再跳 GitHub、再跳总数，数字会闪两次。
+  var state = { mirror: null, gh: null };
 
   function readInitialGH() {
     var el = document.querySelector('[data-gh-downloads]');
@@ -511,15 +513,28 @@
   }
 
   function render() {
+    var gh = state.gh !== null ? state.gh : readInitialGH();
+    var mirror = state.mirror !== null ? state.mirror : 0;
+
     document.querySelectorAll('[data-mirror]').forEach(function (el) {
-      el.textContent = state.mirror.toLocaleString('zh-CN');
+      el.textContent = mirror.toLocaleString('zh-CN');
     });
     document.querySelectorAll('[data-gh-downloads]').forEach(function (el) {
-      el.textContent = state.gh.toLocaleString('zh-CN');
+      el.textContent = gh.toLocaleString('zh-CN');
     });
     document.querySelectorAll('[data-downloads]').forEach(function (el) {
-      el.textContent = (state.mirror + state.gh).toLocaleString('zh-CN');
+      el.textContent = (mirror + gh).toLocaleString('zh-CN');
     });
+
+    // 数字就位后再显示，避免先看到静态快照再跳
+    document.querySelectorAll('.dl-count').forEach(function (el) {
+      el.classList.add('is-ready');
+    });
+  }
+
+  // 两个来源都到齐才渲染；任一超时则由下面的定时器兜底
+  function renderIfReady() {
+    if (state.gh !== null && state.mirror !== null) render();
   }
 
   // GitHub Releases 的下载数只能从 API 拿。没有 token，60 次/小时/IP，
@@ -538,7 +553,7 @@
           }, 0);
         }, 0);
         state.gh = total;
-        render();
+        renderIfReady();
       })
       .catch(function () { /* 保持兜底值 */ });
   }
@@ -560,7 +575,7 @@
         var n = res && res.count;
         if (typeof n !== 'number') return;
         state.mirror = n;
-        render();
+        renderIfReady();
       })
       .catch(function () { /* 计数失败不影响页面 */ });
   }
@@ -576,13 +591,22 @@
   }
 
   function boot() {
-    state.gh = readInitialGH();
-    render();
+    // 2.5 秒内两个来源都没齐（网络慢或 API 被限流），用现有值先显示，
+    // 之后哪个先回来都不再单独刷新，避免二次跳动
+    var fallback = setTimeout(function () {
+      if (!document.querySelector('.dl-count.is-ready')) render();
+    }, 2500);
 
     loadGitHub();
 
     initCloud(function (cloud) {
-      loadMirror(cloud);
+      if (cloud) {
+        loadMirror(cloud);
+      } else {
+        // 云服务 SDK 没加载成功：镜像数按 0 算，让 GitHub 那份能单独出结果
+        state.mirror = 0;
+        renderIfReady();
+      }
       document.querySelectorAll('a[download]').forEach(function (a) {
         a.addEventListener('click', function () { trackClick(cloud); });
       });
