@@ -97,7 +97,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 PLIST
 
 # bundle id 可覆盖：本地开发时换一个，避开 macOS 对旧 id 的菜单栏授权记录
-BUNDLE_ID="${SPRIG_BUNDLE_ID:-com.catking.sprig.app}"
+BUNDLE_ID="${SPRIG_BUNDLE_ID:-com.catking.sprig.app2}"
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier ${BUNDLE_ID}" "$APP/Contents/Info.plist"
 
 # 版本号从 git tag 读：v0.2.0 → 0.2.0；CFBundleVersion 用提交数，保证单调递增

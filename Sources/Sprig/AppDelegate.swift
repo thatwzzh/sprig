@@ -645,7 +645,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // 重建打包后 macOS 可能沿用旧的菜单栏位置记录；换一个新的 autosave 名，
         // 让系统把状态项重新放到默认可见位置。
-        item.autosaveName = "com.catking.sprig.status.v2"
+        item.autosaveName = "com.catking.sprig.status.v3"
         item.isVisible = true
 
         // 菜单只留四件事：打开面板 / 解释剪贴板 / 当前选区 / 设置 / 退出
@@ -713,8 +713,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.statusItem?.isVisible = true
             }
         } else {
-            DebugTrace.log("status item offscreen; rebuild attempt \(statusRepairAttempts)")
-            setupStatusItem()
+            // 只做「隐藏 → 显示」，不再 remove + create：
+            // 重建会把新状态项重新分配到屏幕外，越修越坏。
+            DebugTrace.log("status item offscreen; nudge attempt \(statusRepairAttempts)")
+            item.isVisible = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+                self?.statusItem?.isVisible = true
+            }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in
             self?.probeStatusItem()
