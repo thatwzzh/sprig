@@ -36,7 +36,9 @@ if [ "$CHECK_ONLY" = "1" ]; then
 fi
 
 # ── 3. 构建 ──
-./scripts/make-app.sh release
+# 发布包固定用 com.catking.sprig.app：这是对外身份，用户的系统按它记账。
+# 本地开发用 .app2（菜单栏那条记录在 .app 上坏掉了），两者互不影响。
+SPRIG_BUNDLE_ID=com.catking.sprig.app ./scripts/make-app.sh release
 
 # ── 4. 校验产物 ──
 PLIST_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist")
