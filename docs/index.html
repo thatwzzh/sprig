@@ -167,6 +167,29 @@
         <p class="shot-caption">右边那棵树，是这次对话自己长出来的</p>
       </div>
     </div>
+
+    <div class="wrap">
+      <div class="chapter chapter-wide reveal">
+        <div class="chapter-head">
+          <div>
+            <p class="step-no">04 — 选词</p>
+            <h2>在别的 App 里选中，<br>也能直接问</h2>
+          </div>
+          <p class="chapter-lede">
+            不用切回来复制粘贴。在任意应用里选中文字，按一下 <kbd class="inline">⌥⇧Space</kbd>，
+            知枝会带着<strong>来源</strong>一起解释——网页带正文段落，Markdown、PDF、Office 带标题层级和页码，
+            长文档还会从其他章节补 1–2 段最相关的原文。上下文默认全程本地计算，不上传。
+          </p>
+        </div>
+
+        <ul class="ticks ticks-2col">
+          <li><strong>热键</strong>：选中 → <kbd class="inline">⌥⇧Space</kbd>，只读一次选区，不做后台监听</li>
+          <li><strong>服务菜单</strong>：右键 → 服务 →「用知枝解释」，不需要任何权限</li>
+          <li><strong>URL scheme</strong>：<code>sprig://explain?text=…</code>，可接 Raycast、快捷指令、书签小工具</li>
+          <li><strong>DSH 插件</strong>：在 DSH 对话里选中，直接送进来，自动带上前后消息</li>
+        </ul>
+      </div>
+    </div>
   </section>
 
   <!-- ============================ 知识树沙盘 ============================ -->
@@ -389,6 +412,12 @@
           <svg class="di" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h8l4.5 4.5v12.5H6z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M8.8 12h6.4M8.8 15.6h4.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
           <h3>一棵树 = 一个 .md</h3>
           <p>子卡按层级写进同一个 Markdown 文件，落在知识库目录里。能用 Obsidian 打开，也能直接 <code>git commit</code>。</p>
+        </article>
+
+        <article class="detail reveal">
+          <svg class="di" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5h6M8 5.5v13M14 9.5h5M14 14.5h5M14 5.5h2.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M14 5.5 16.8 19" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+          <h3>数学公式也是图</h3>
+          <p><code>$$…$$</code> 和 <code>\(…\)</code> 走 KaTeX 离屏渲染成图片再挂进文本，多行公式不会被拆成一行乱码。</p>
         </article>
       </div>
     </div>

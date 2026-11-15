@@ -1502,3 +1502,19 @@ footer {
   from { opacity: 0; }
   to   { opacity: 1; }
 }
+
+/* 04 选词：四条入口说明，桌面两列 */
+.ticks-2col {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 32px;
+  margin-top: 32px;
+}
+
+@media (max-width: 720px) {
+  .ticks-2col { grid-template-columns: 1fr; }
+}
+
+.ticks-2col strong {
+  color: var(--ink-1);
+  font-weight: 600;
+}
