@@ -189,7 +189,7 @@ Settings → Reading theme.
 
 ## DSH plugin
 
-`dsh-plugins/sprig/` is a DSH (DeepSeek Harness) client plugin:
+The plugin is published on npm as [`dsh-plugin-sprig`](https://www.npmjs.com/package/dsh-plugin-sprig) (source in `dsh-plugins/sprig/`). It is a DSH (DeepSeek Harness) client plugin:
 
 - Selecting text in a DSH conversation turns DSH's own quote bar into **Copy / Quote / Explain with Sprig**, instead of adding a second right-click surface that duplicates the native Copy.
 - It reads at most one real user/assistant message either side of the selection, filtering out `<system-reminder>`, `available_skills`, and context nodes, capped at 1800 characters.
@@ -197,7 +197,7 @@ Settings → Reading theme.
 - Sprig must be running, and **cross-app selection must be enabled** in settings.
 - DSH Web UI only — the terminal/CLI does not work.
 
-Install: DSH settings → **Plugins → Add plugin** and paste `https://github.com/thatwzzh/sprig/tree/main/dsh-plugins/sprig` (picking the local directory also works, as does letting the agent install it with `install_bundle`). Refresh the DSH page or start a new session afterwards.
+Install: DSH settings → **Plugins → Add plugin** and paste `dsh-plugin-sprig`. Refresh the DSH page or start a new session afterwards.
 
 > The plugin reuses DSH's native `quote` surface (same key, lower priority so it overrides). If a DSH upgrade changes that internal surface, the plugin needs adapting. The bridge listens on loopback only, has no token, can only create explanation cards, and never reads local data; request logs go to `/tmp/sprig-bridge.log`.
 

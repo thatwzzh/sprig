@@ -190,7 +190,7 @@ URL scheme 只适合短内容（`text` 上限 500 字、`context` 上限 1000 �
 
 ## DSH 对话内选词插件
 
-仓库里的 `dsh-plugins/sprig/` 是 DSH（DeepSeek Harness）Client 插件：
+插件已发布到 npm：[`dsh-plugin-sprig`](https://www.npmjs.com/package/dsh-plugin-sprig)（源码在 `dsh-plugins/sprig/`）。它是 DSH（DeepSeek Harness）Client 插件：
 
 - 选中 DSH 对话文字后，DSH 原有的「引用」操作条会变成 **复制 / 引用 / 用知枝解释**，不再额外弹一个和原生 Copy 重叠的右键表面；
 - 只读取选中消息前后各最多一条**真实用户/助手消息**，过滤 `<system-reminder>`、`available_skills`、context 节点，总长 ≤1800 字；
@@ -198,7 +198,7 @@ URL scheme 只适合短内容（`text` 上限 500 字、`context` 上限 1000 �
 - 需要知枝已启动，且设置里启用了「启用跨应用划词」；
 - 只对 DSH Web UI 生效；终端/CLI 不生效。
 
-安装：DSH 设置 → **Plugins → Add plugin**，填插件地址 `https://github.com/thatwzzh/sprig/tree/main/dsh-plugins/sprig`（也可以本地选目录，或让 agent 用 `install_bundle`）。安装/更新后刷新 DSH 页面或新开会话。
+安装：DSH 设置 → **Plugins → Add plugin**，填包名 `dsh-plugin-sprig`。安装/更新后刷新 DSH 页面或新开会话。
 
 > 插件复用了 DSH 原生 `quote` 表面（key 相同、priority 更低覆盖）；DSH 升级后如果内部表面实现变化，需要跟着适配。bridge 只监听回环地址、无 token，仅能创建解释卡，不读取本机数据；请求日志写到 `/tmp/sprig-bridge.log`。
 

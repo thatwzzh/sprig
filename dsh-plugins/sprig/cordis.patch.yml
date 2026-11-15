@@ -1,4 +1,4 @@
 - insert:
     - id: sprig-dsh
-      name: '@local/sprig'
+      name: 'dsh-plugin-sprig'
       config: {}
