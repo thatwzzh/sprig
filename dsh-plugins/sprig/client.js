@@ -5,7 +5,7 @@
  * 但把 key='quote' 的表面替换成同时包含三个操作的组件，避免右键时和原生 Copy 菜单叠在一起。
  */
 window.__ModuleLoader__.load({
-  id: '@local/sprig',
+  id: 'dsh-plugin-sprig',
   factory(require) {
     const React = require('react')
     const h = React.createElement

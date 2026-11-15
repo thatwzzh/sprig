@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-sprig",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "DSH client plugin: send selected conversation text to Sprig and get a source-aware explanation card.",
   "type": "module",
   "license": "MIT",
