@@ -130,14 +130,35 @@ else
   echo "!! 没找到 acp-host，包内不带（功能要用户自己装）"
 fi
 
-# 签名：默认 adhoc。adhoc 每次构建 CDHash 都会变，系统记不住授权（辅助功能/屏幕录制会重弹）。
-# 有稳定的签名证书时用 SPRIG_SIGN_IDENTITY 指定，授权就跟着证书走，不再每次重问。
-# 注意顺序：包里嵌套的可执行文件必须**先**签，外层后签——外层签名会记录里面的哈希。
+# 签名：用 Xcode 里登录的 Apple Development 证书，不再退回 adhoc。
+# adhoc 每次构建 CDHash 都会变，系统按签名身份记账（菜单栏授权、辅助功能、TCC），
+# 每次升级都会被当成「另一个 app」，授权全部重来。
+# 证书名固定后，升级只换代码，身份不变，授权自动沿用。
+# 顺序：包里嵌套的可执行文件必须**先**签，外层后签——外层签名会记录里面的哈希。
 SIGN_ARGS=(--force)
-if [ -n "${SPRIG_SIGN_IDENTITY:-}" ]; then
-  SIGN_ARGS+=(--options runtime --sign "$SPRIG_SIGN_IDENTITY")
-else
+SIGN_IDENTITY="${SPRIG_SIGN_IDENTITY:-}"
+
+if [ -z "$SIGN_IDENTITY" ]; then
+  # 自动挑一个 Apple Development 证书（可能有多个，取第一个）
+  # grep 没匹配到会返回 1，配上 set -e/pipefail 会让脚本直接静默退出
+  SIGN_IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null \
+    | grep -o '"Apple Development: [^"]*"' | head -1 | tr -d '"' || true)
+fi
+
+if [ -z "$SIGN_IDENTITY" ]; then
+  echo "!! 没有可用的签名证书（security find-identity -v -p codesigning 返回空）"
+  echo "   去 Xcode → Settings → Accounts → 选中你的 Apple ID → Manage Certificates"
+  echo "   → 左下角 + → Apple Development，生成后重跑本脚本。"
+  echo "   临时指定别的证书：SPRIG_SIGN_IDENTITY='Apple Development: 名字 (TEAMID)' ./scripts/make-app.sh"
+  echo "   确实要用 adhoc（会丢授权）：SPRIG_SIGN_IDENTITY=- ./scripts/make-app.sh"
+  exit 1
+fi
+
+if [ "$SIGN_IDENTITY" = "-" ]; then
+  echo "!! 使用 adhoc 签名——每次构建 CDHash 都会变，菜单栏/辅助功能授权需要重给"
   SIGN_ARGS+=(--sign -)
+else
+  SIGN_ARGS+=(--options runtime --sign "$SIGN_IDENTITY")
 fi
 
 if [ -f "$APP/Contents/Resources/acp-host" ]; then
@@ -145,7 +166,7 @@ if [ -f "$APP/Contents/Resources/acp-host" ]; then
     || echo "!! 内层 acp-host 签名失败"
 fi
 codesign "${SIGN_ARGS[@]}" "$APP" >/dev/null 2>&1 \
-  && echo "已签名：${SPRIG_SIGN_IDENTITY:-adhoc}" \
+  && echo "已签名：${SIGN_IDENTITY}" \
   || echo "!! 外层签名失败（证书名对吗？security find-identity -v -p codesigncing）"
 
 codesign --verify --deep --strict "$APP" >/dev/null 2>&1 \
