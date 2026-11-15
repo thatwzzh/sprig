@@ -1559,3 +1559,15 @@ footer {
   color: var(--ink-4) !important;
   font-size: 12.5px !important;
 }
+
+/* DSH 插件地址：单独一行，长 URL 可换行 */
+.dsh-url {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-all;
+  background: color-mix(in srgb, var(--ink-1) 5%, transparent);
+  border-radius: 6px;
+}

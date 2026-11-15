@@ -198,7 +198,7 @@ URL scheme 只适合短内容（`text` 上限 500 字、`context` 上限 1000 �
 - 需要知枝已启动，且设置里启用了「启用跨应用划词」；
 - 只对 DSH Web UI 生效；终端/CLI 不生效。
 
-安装：DSH 设置 → **Plugins → Add plugin**，选择 `dsh-plugins/sprig` 目录；或让 agent 用 `install_bundle` 安装。安装/更新后刷新 DSH 页面或新开会话。
+安装：DSH 设置 → **Plugins → Add plugin**，填插件地址 `https://github.com/thatwzzh/sprig/tree/main/dsh-plugins/sprig`（也可以本地选目录，或让 agent 用 `install_bundle`）。安装/更新后刷新 DSH 页面或新开会话。
 
 > 插件复用了 DSH 原生 `quote` 表面（key 相同、priority 更低覆盖）；DSH 升级后如果内部表面实现变化，需要跟着适配。bridge 只监听回环地址、无 token，仅能创建解释卡，不读取本机数据；请求日志写到 `/tmp/sprig-bridge.log`。
 

@@ -197,7 +197,7 @@ Settings → Reading theme.
 - Sprig must be running, and **cross-app selection must be enabled** in settings.
 - DSH Web UI only — the terminal/CLI does not work.
 
-Install: DSH settings → **Plugins → Add plugin**, pick the `dsh-plugins/sprig` directory; or let the agent install it with `install_bundle`. Refresh the DSH page or start a new session afterwards.
+Install: DSH settings → **Plugins → Add plugin** and paste `https://github.com/thatwzzh/sprig/tree/main/dsh-plugins/sprig` (picking the local directory also works, as does letting the agent install it with `install_bundle`). Refresh the DSH page or start a new session afterwards.
 
 > The plugin reuses DSH's native `quote` surface (same key, lower priority so it overrides). If a DSH upgrade changes that internal surface, the plugin needs adapting. The bridge listens on loopback only, has no token, can only create explanation cards, and never reads local data; request logs go to `/tmp/sprig-bridge.log`.
 
