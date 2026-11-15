@@ -101,6 +101,61 @@ Select an unfamiliar word in the answer → `Explain`. A child card appears, att
 - Panel height only grows during streaming, so it never jitters as lines reflow
 - Scrolling up while reading won't yank you back to the bottom — it only follows when you're already at the bottom
 
+## Cross-app selection
+
+Besides selecting text inside the panel, Sprig can turn text selected in **other apps** into an explanation card that carries its source:
+
+| Entry | How | Permission |
+|---|---|---|
+| Hotkey | select text → `⌥⇧Space` (remappable) | Accessibility (reads the current selection once) |
+| Menu bar | "Explain current selection" / "Explain clipboard" | Accessibility for the selection; clipboard needs none |
+| Services | select text → right-click → Services → "Explain with Sprig" | none |
+| URL scheme | `open "sprig://explain?text=…&url=…&title=…"` | none |
+
+The explanation carries as much source context as it can find: **web pages** fetch the public body and locate the paragraph containing the selection; **local Markdown / Obsidian / PDF / Office files** are resolved by window title or file path and bring heading level, page number, and surrounding paragraph; **DSH conversations** go through a dedicated plugin that pulls the real messages; **other apps** fall back to whatever AX text is nearby. The source shows above the question bar — click it to jump back to the original.
+
+Long documents are not just "selection ± N characters". Markdown splits by heading, PPTX by slide, web pages by paragraph; Sprig takes the section containing the selection, then uses keywords (Chinese bigrams + English words) to pull the 1–2 most relevant passages from other sections. PDFs open a window centred on the selection spanning pages, naturally including the tail of the previous page when the selection sits at the top. **Everything is computed locally by default — no LLM summarisation** — with a context ceiling around 1200 characters. The ⓘ next to the source line previews exactly what gets sent to the model and the token estimate.
+
+Settings can enable **deep context** (long-document / long-conversation summarisation): only when the context clearly exceeds the budget (~1200 tokens) does Sprig ask the active model to condense the surrounding material (the selection itself stays verbatim). Summaries are cached by content, so the same material is never sent twice; with no model configured it falls back to local extraction and the explanation still works.
+
+Boundaries and privacy:
+
+- No background listening — the selection is read once, when you press the hotkey, click the menu item, or invoke the service.
+- Accessibility permission is required on first use. **An ad-hoc build asks again after every reinstall** — that is macOS tracking authorisation by signature, not something Sprig can bypass.
+- Web fetching only requests public `http(s)` URLs and refuses private/loopback addresses. It can be turned off in settings.
+- Document lookup requires adding document folders or Obsidian vaults manually. **`~/Documents` is never scanned automatically.**
+- PDFs must have a text layer; scanned PDFs yield only the selection. Office files contribute body text only (docx paragraphs / pptx slides / xlsx rows) — no images, charts, or layout.
+- For DSH conversations use the dedicated plugin. For other Electron apps, when AX exposes no conversation context, Sprig simulates one ⌘C and restores the clipboard — that guarantees the selection but not the surrounding messages.
+- ACP agent mode is a **Q&A mode**: the agent will not be asked to call Grep/Bash/Read, and tool permissions are denied automatically. If you need the agent to actually do work, use its own client.
+
+### Cross-app selection settings
+
+Menu bar → Settings… → two tabs at the top, **General / Cross-app selection**:
+
+- **General**: model providers, agents, knowledge base, web search, deep context;
+- **Cross-app selection**: master switch, explain-selection hotkey, accessibility status and a shortcut to grant it, selection length ceiling (default 500 chars, configurable 200–2000), web-context toggle, document lookup (optional).
+
+**Document folders and Obsidian vaults are optional** — explaining a selection works without them. They are only used when the source app exposes no file path and Sprig has to reverse-look-up a local document by window title. Web fetching, the DSH plugin, an explicit URL `path`, and AXDocument file URLs do not depend on either.
+
+There is no separate "cross-app selection settings…" menu entry any more. The deep-context switch lives in the General tab, under the web-search area.
+
+### URL scheme / Shortcuts
+
+`sprig://explain` is meant for Raycast / Alfred / Shortcuts / bookmarklets:
+
+| Parameter | Meaning |
+|---|---|
+| `text` | Required — the selected text (500-char ceiling over the URL entry) |
+| `title` / `url` / `path` / `app` | Source hints |
+| `kind` | `web/agent/markdown/note/app/clipboard/pdf/document`; inferred from url/path when omitted |
+| `context` / `question` | Optional: context the caller already gathered, or an accompanying question |
+
+```bash
+open "sprig://explain?text=hallucination&title=RAG&url=https%3A%2F%2Fexample.com%2Frag&kind=web"
+```
+
+The URL scheme is for short content only (`text` ≤ 500 chars, `context` ≤ 1000 chars). The DSH plugin uses the local bridge instead and does not go through the URL scheme.
+
 ## Knowledge tree
 
 Every card remembers the context it was born in. Follow-ups carry only the relevant ancestors.
@@ -132,26 +187,19 @@ Each has light and dark palettes that follow the system appearance. Themes chang
 
 Settings → Reading theme.
 
-## Cross-app selection
+## DSH plugin
 
-Besides selecting text inside the panel, Sprig can turn text selected in other apps into a source-aware explanation card:
+`dsh-plugins/sprig/` is a DSH (DeepSeek Harness) client plugin:
 
-| Entry | How | Permission |
-|---|---|---|
-| Hotkey | select text → `⌥⇧Space` | Accessibility (reads selection once) |
-| Menu bar | Explain current selection / Explain clipboard | Accessibility for selection; clipboard needs none |
-| Services | select text → right-click → Services → Explain with Sprig | none |
-| URL scheme | `open "sprig://explain?text=…&url=…"` | none |
+- Selecting text in a DSH conversation turns DSH's own quote bar into **Copy / Quote / Explain with Sprig**, instead of adding a second right-click surface that duplicates the native Copy.
+- It reads at most one real user/assistant message either side of the selection, filtering out `<system-reminder>`, `available_skills`, and context nodes, capped at 1800 characters.
+- It sends the payload to a **running** Sprig instance through the local bridge on `127.0.0.1:53917`; Sprig creates the card and explains.
+- Sprig must be running, and **cross-app selection must be enabled** in settings.
+- DSH Web UI only — the terminal/CLI does not work.
 
-Context sources: public web pages, local Markdown / Obsidian / PDF / Office documents, and DSH conversations (via plugin). Open the ⓘ next to the source line to preview the exact context and estimated tokens.
+Install: DSH settings → **Plugins → Add plugin**, pick the `dsh-plugins/sprig` directory; or let the agent install it with `install_bundle`. Refresh the DSH page or start a new session afterwards.
 
-Document folders and Obsidian vaults are **optional**: Sprig explains selections without them. They are only used to reverse-look-up a local document by window title when the source app does not expose a file path. Web pages, the DSH plugin, explicit URL `path`, and AXDocument file URLs do not depend on them.
-
-**Deep context** (Settings → Web search area) is off by default. When the raw context exceeds ~1200 tokens, Sprig asks the active model to summarize the surrounding material (the selection itself stays verbatim), caches the summary, and falls back to a local extractive summary when no model is configured.
-
-### DSH plugin
-
-`dsh-plugins/sprig/` is a DSH client plugin: selecting text replaces DSH's quote action bar with **Copy / Quote / Explain with Sprig**. Only real user/assistant messages are sent (system reminders and skill catalogs are filtered, ≤1800 chars), via the local bridge at `127.0.0.1:53917`. Install it from DSH **Plugins → Add plugin** (select the directory), start Sprig, then refresh DSH. It works in the DSH Web UI only and reuses DSH's internal quote surface, so a future DSH UI change may need adaptation.
+> The plugin reuses DSH's native `quote` surface (same key, lower priority so it overrides). If a DSH upgrade changes that internal surface, the plugin needs adapting. The bridge listens on loopback only, has no token, can only create explanation cards, and never reads local data; request logs go to `/tmp/sprig-bridge.log`.
 
 ## Connecting a local agent
 
@@ -307,6 +355,14 @@ Dismiss the dialog, then go to System Settings → Privacy & Security, scroll to
 ### The menu bar icon disappeared
 
 System Settings → **Menu Bar** → scroll to "Allow in the menu bar" and make sure Sprig is on.
+
+### Cross-app selection does nothing / no selection read
+
+1. Check **System Settings → Privacy & Security → Accessibility** has Sprig ticked. An ad-hoc build needs re-ticking after every rebuild (while the permission prompt is up, the panel drops to a normal window level so it does not cover the dialog).
+2. With the panel already focused, the hotkey will not read Sprig itself — switch to the target app and select text there.
+3. Chrome / Electron may return an empty selection the first time (the accessibility tree needs warming up) — press again.
+4. When the app exposes no AX selection, copy the text and use "Explain clipboard" from the menu bar as a fallback.
+5. For diagnostics: `Sprig --capture-selection` prints whether permission is granted and what selection/source was read.
 
 ### Constant 429s
 
