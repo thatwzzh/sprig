@@ -648,25 +648,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.autosaveName = "com.catking.sprig.status.v3"
         item.isVisible = true
 
-        // 菜单只留四件事：打开面板 / 解释剪贴板 / 当前选区 / 设置 / 退出
+        // 菜单只留三件事：打开面板 / 设置 / 退出。
+        // 剪贴板和选区都有热键（⌥⇧Space）与系统服务菜单，不在这里重复一遍。
         let menu = NSMenu()
         let openItem = NSMenuItem(title: "打开\(AppInfo.name)", action: #selector(openPanel), keyEquivalent: "")
         openItem.target = self
         menu.addItem(openItem)
-
-        let clipboardItem = NSMenuItem(title: "解释剪贴板内容",
-                                       action: #selector(explainClipboard),
-                                       keyEquivalent: "")
-        clipboardItem.target = self
-        clipboardItem.toolTip = "把剪贴板里的文字作为选区，生成一张带来源的解释卡"
-        menu.addItem(clipboardItem)
-
-        let selectionItem = NSMenuItem(title: "解释当前选区",
-                                       action: #selector(explainCurrentSelection),
-                                       keyEquivalent: "")
-        selectionItem.target = self
-        selectionItem.toolTip = "读取当前 App 里选中的文字并解释（默认快捷键 ⌥⇧Space）"
-        menu.addItem(selectionItem)
 
         menu.addItem(.separator())
 
