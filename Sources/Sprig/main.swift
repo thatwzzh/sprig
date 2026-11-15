@@ -93,6 +93,34 @@ if CommandLine.arguments.contains("--acp-host-info") {
     exit(0)
 }
 
+// 直接走 AcpClient 跑一轮（不经过 acp-host / UI），排查 app 内链路用
+if let index = CommandLine.arguments.firstIndex(of: "--direct-acp-probe"),
+   index + 1 < CommandLine.arguments.count {
+    let question = CommandLine.arguments[index + 1]
+    let semaphore = DispatchSemaphore(value: 0)
+    Task {
+        let command = Settings.acpCommand
+        let stream = await AcpClient.shared.ask(
+            text: question + AcpCodec.termHint,
+            commandLine: command,
+            cwd: Settings.acpWorkspacePath,
+            path: AcpEnvironment.searchPath(),
+            model: Settings.activeAgent?.modelID,
+            thoughtLevel: Settings.activeAgent?.thoughtLevel,
+            permission: { _ in .selected("allow") },
+            onAuthURL: { url in print("AUTH: \(url)") })
+        do {
+            for try await chunk in stream { print(chunk, terminator: "") }
+            print("\n[direct ok]")
+        } catch {
+            print("\n[direct error] \(error.localizedDescription)")
+        }
+        semaphore.signal()
+    }
+    semaphore.wait()
+    exit(0)
+}
+
 // 让 daemon 列出本机装了哪些 agent
 if CommandLine.arguments.contains("--host-agents") {
     let semaphore = DispatchSemaphore(value: 0)

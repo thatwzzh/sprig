@@ -25,6 +25,12 @@ if [ -f assets/vendor/mermaid.min.js ]; then
   cp assets/vendor/mermaid.min.js "$APP/Contents/Resources/mermaid.min.js"
 fi
 
+# KaTeX 运行时：$$ 数学公式在本地渲染，不走网络（CSS 里引用 fonts/ 相对路径）
+if [ -d assets/vendor/katex ]; then
+  rm -rf "$APP/Contents/Resources/katex"
+  cp -R assets/vendor/katex "$APP/Contents/Resources/katex"
+fi
+
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -65,6 +71,25 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
         <string>com.catking.sprig.demo</string>
         <key>CFBundleURLSchemes</key>
         <array><string>sprig</string></array>
+      </dict>
+    </array>
+    <key>NSServices</key>
+    <array>
+      <dict>
+        <key>NSMessage</key>
+        <string>explainSelection</string>
+        <key>NSPortName</key>
+        <string>Sprig</string>
+        <key>NSMenuItem</key>
+        <dict>
+          <key>default</key>
+          <string>用知枝解释</string>
+        </dict>
+        <key>NSSendTypes</key>
+        <array>
+          <string>NSStringPboardType</string>
+          <string>public.utf8-plain-text</string>
+        </array>
       </dict>
     </array>
 </dict>

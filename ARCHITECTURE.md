@@ -10,7 +10,7 @@
 | 轻 | 包 < 15MB、常驻 < 120MB、热键到可见 < 50ms | 全原生 AppKit，不引 WebView / Electron；面板常驻内存不重建 |
 | 快 | 输入即答，首 token 尽量早 | 流式渲染 + 40ms 节流；模型关思维链、限上下文 |
 | 低摩擦 | 唤起 → 问 → 追问 全程不换窗口 | 单窗口内完成输入、阅读、选词、分支、导航 |
-| 低权限 | 不申请辅助功能 / 屏幕录制 | 选词只发生在自己的 `NSTextView` 里，不做全局划词 |
+| 低权限 | 默认不申请辅助功能 / 屏幕录制；跨应用取词是可选项 | 默认选词仍发生在自己的 `NSTextView` 里；只有用户按热键/点菜单/走服务时才读一次 AX 选区，不后台监听 |
 
 上下文：面板是 `nonactivating` 的，打字时不会抢走当前 App 的焦点；它是一个菜单栏应用（`LSUIElement`）。
 
@@ -62,6 +62,20 @@ UI 层不直接读文件，Core 层不 import AppKit——这条边界让「解�
 | `BreadcrumbBar` | 路径 | 祖先可点回跳；不再带兄弟切换器 |
 | `KnowledgeTreeView` | 树 | `NSOutlineView`；搜索过滤 + 命中标记 + 内联改名 + hover 删除；无横向滚动 |
 | `SelectionActionBar` | 选区动作条 | 面板内浮层，避免独立窗口抢 key window |
+| `SelectionEnvelope` | 外部选区协议 | 来源 + 选区 + 上下文 + 问题；`sprig://explain` 解析；老卡片可缺省 |
+| `SelectionCapture` | AX 全局取词 | 只在热键时读一次；后台线程 + messaging timeout；Chromium 冷启动重试 |
+| `SourceContextResolver` | 来源上下文 | 网页抓取 / 本地文件反查 / AX 周边文字，按优先级降级，永不阻塞解释 |
+| `SelectionContextAssembler` | 外部上下文装配 | 来源元信息 + 所在上下文 + 选区 + 任务；`«»` 标出选区；按预算截断 |
+| `SelectionServiceProvider` | Services 入口 | `NSServices` + pasteboard → envelope，无权限；授权时补 AX 来源/上下文 |
+| `LocalBridge` | 本机 HTTP bridge | 监听 `127.0.0.1:53917`，接收 DSH 插件 POST 的选区+对话上下文，交给 `handleExternalSelection` 建卡；对 Electron renderer 的 `Origin: null` 也放行，请求日志写 `/tmp/sprig-bridge.log` |
+| `dsh-plugins/sprig` | DSH Client 插件 | 复用 quote 表面（priority -10）合并复制/引用/知枝；只取 user/assistant 消息，过滤 system-reminder/技能清单，≤1800 字；POST 到本机 bridge |
+| `RichDocumentContext` | PDF / Office 抽取 | PDFKit 提 PDF 文本并以选区为中心跨页开窗；docx/pptx/xlsx 解压 XML 提正文，失败则退回只有选区 |
+| `ContextRetrieval` | 结构检索 | Markdown 标题 / PPTX 幻灯片 / 网页段落切 section，选区段落 + 关键词相关的 1–2 段原文，本地计算不调模型 |
+| `TokenEstimator` | token 估算 | CJK≈0.9 token/字、其余≈1/3 token/字符；给上下文预览和调试用 |
+| `ContextCompressor` | 深度上下文摘要 | 上下文超预算时调用当前模型压缩周边资料；按内容 hash 缓存，失败退回本地截取 |
+| `DeepContextComposer` | 摘要组装 | 保留选区原文 + `【长上下文摘要】`，清理模型输出并截断 |
+| `SelectionSettingsSheet` | 跨应用选词内容 | 权限/热键/选区上限/文档目录/Obsidian 库，作为视图嵌入「知枝设置」标签页，不再单独开窗 |
+| `SettingsWindowController` | 知枝设置 | 500×980；顶部「常规 / 跨应用选词」标签；常规模块原布局不变 |
 | `ConfirmDialog` | 删除确认 | 自绘圆角卡片，无图标；`NSApp.runModal` 应用级 modal，居中在面板上；← → 切换选中，默认选中「删除」 |
 | `PointerCursor` | 指针样式 | 可点击控件 hover 显示手型光标（`PointerButton`） |
 | `ModelPickerButton` | 模型切换 | 输入框右侧胶囊，固定宽度避免文字换行导致布局抖动 |
@@ -177,6 +191,44 @@ fallback：把已缓冲内容当正文输出，并吞掉后到的 ⟧
 **关键约束**：`renderCurrent` 用的是独立的 `replay` parser 重放 raw，
 和流式用的 `parser` 是两套状态，所以「吞掉内容」不影响已渲染的部分。
 
+### 4.6 外部选区（P0/P1）
+
+四个入口共用一条链路：`sprig://explain` / Services / 菜单栏剪贴板 / `⌥⇧Space`（AX）。
+
+```
+入口 → SelectionEnvelope
+     → PanelController.handleExternalSelection
+        1) 取消上一次外部解析，建一张外部根卡（来源行 + 占位「正在读取来源上下文…」）并落库
+        2) SourceContextResolver（异步，预算约 3s）
+             provided context（DSH bridge/入口方给的）→ 文件路径 → AX 周边文字（必须含选区）
+             → 网页抓取 → 窗口标题反查文档 → 只有元信息
+             解析结果统一压到 1200 字：网页先去掉 script/style/nav/footer，
+             长文档用结构检索补相关段落，PDF 用选区居中跨页窗口
+        3) 深度上下文开启且超预算时 → ContextCompressor 摘要（失败退回本地抽取）
+        4) 把 source/contextSnapshot 写回卡片 → startStreaming(selectionContextual)
+     → 现有卡片 / 流式 / 知识树 / Markdown 投影
+```
+
+- **AX 取词**：`AXUIElementCreateApplication(pid)` → `kAXFocusedUIElementAttribute` → `kAXSelectedTextAttribute`；沿父链最多 3 层。窗口标题/`kAXDocumentAttribute` 作为来源线索；`kAXStringForRangeParameterizedAttribute` 拿周边文字。所有 AX 调用在后台线程并设 messaging timeout。
+- **Electron 兜底**：DSH Desktop 这类 Electron 应用常常不向 AX 暴露选区。AX 读不到时（仅热键路径），会模拟一次 ⌘C → 读剪贴板 → 还原原剪贴板；只在剪贴板确实被写入时采用，避免把上次复制内容当成选区。这条兜底只能拿到选区，拿不到会话前后文；DSH 对话的完整上下文走专用 Client 插件。
+- **为什么先记 pid 再 show**：面板一旦显示，前台 App 可能变成 Sprig，之后取到的就是自己。Chromium/WebView 第一次查询才构建无障碍树，所以空选区 120ms 后重试一次。
+- **网页**：只抓公网 http(s)，拒绝 loopback/私有网段/`.local`；不携带 Cookie；重定向后校验最终 URL；正文抽取会剥掉多行 `<style>/<script>` 和 nav/aside/footer（之前漏了多行 CSS，整段样式表被当成上下文）；定位选区后按段落截取；找不到就退化为标题。
+- **本地文档**：显式 `path` / AXDocument file URL 优先；否则用窗口标题 + 配置的文档文件夹/Obsidian 库反查，并且必须「文件里真的找得到选区」才采用，避免同名文件误配。纯文本/Markdown 只读 512KB，统一 CRLF，剥掉 YAML frontmatter / HTML 注释，支持标题层级/相邻段落/TextAnchor；窗口标题会先剥掉「 - Obsidian」「 — Visual Studio Code」这类 App 后缀。
+- **PDF / Office**：PDF 用 PDFKit 逐页抽文本，拼成带 `【第 N 页】` 标记的全文，再以选区为中心开窗——窗口可以跨页，选区在页首时会自然带上一页尾部，不会从页首硬切导致「后面多、前面少」。docx/pptx/xlsx 用系统 unzip 解到临时目录，再用 XMLParser 抽正文（docx 段落、pptx 幻灯片、xlsx 行）。只支持有文字层的 PDF；扫描版/纯图片文档没有上下文，只有选区。
+  - PDF 页码用「有文本层的页」记录真实页号，不能用数组下标（中间有纯图片页时下标会错位）。
+- **上下文过滤**：所有来源（网页/AX/本地文件）最终都走 `SelectionTextExcerpt`：先定位选区，再按「选区所在段落 ± 邻居」截取，最长 1200 字；找不到选区就不当上下文，避免把样式表/无关文本带进 Prompt。
+- **结构检索（不调模型）**：Markdown 按标题、PPTX 按幻灯片切 section；先取选区所在 section，再用选区关键词（CJK 二元组 + 英文词、IDF 权重）从其他 section 补 1–2 段相关原文，带 `【标题】/【幻灯片 N】` 标签，总长仍受 1200 字限制。网页按段落做同样的检索；PDF 不切 section，而是用选区居中的跨页窗口。**没有任何 LLM 摘要**。
+  - 选区所在段落本身 ≥600 字时不再补其他 section（否则容易把远处「同词不同语境」的页拉进来）；主段落很短才启用补充检索。
+- **上下文预览**：来源行右侧 ⓘ 打开 popover，显示实际 `contextSnapshot` 和 `TokenEstimator` 估算的 token；popover 打开时面板不会被判定为失焦沉底。
+- **Agent 问答约束**：ACP 只转发最后一条 user 消息，system prompt 到不了 agent；因此在 `startAgentStreaming` 的文本末尾追加 `AcpCodec.qaHint`（禁止工具/工作区），并自动拒绝工具权限、不把工具事件写进答案。旧卡片里已经写入的工具过程不会自动消失。
+- **ACP 启动**：不再自动 prewarm。`acp-host` 的 prewarm 是 actor 方法，daemon 不回调时会永远占住 actor，导致之后所有卡片卡在「生成中」；冷启动几秒可以接受。ACP turn 的关键阶段会写 `/tmp/sprig-trace.log`，便于定位卡住位置。
+- **深度上下文（可选）**：设置里打开后，解析阶段把上限放宽到 6000 字；若 `TokenEstimator` 估算超过 1200 token，调用当前模型接入把周边资料压缩成 ≤450 字摘要，选区所在段落仍保留原文，最终组合不超过约 1500 字。摘要按「模型 + 选区 + 内容」hash 缓存；模型未配置或调用失败时退回本地截取。默认关闭，避免日常解释多一次模型调用。
+- **权限**：辅助功能是可选权限；被拒时面板底部给「打开系统设置 / 用剪贴板解释」，不静默失败。默认不后台监听、不自动读剪贴板。
+  - 首次请求授权时，面板临时降到 `.normal` 层级并 `orderBack`，避免 floating 面板盖住系统 TCC 授权弹窗；授权成功或 30s 超时后恢复 `.floating`。
+- **不可信输入**：网页/对话上下文在 Prompt 里明确是资料不是指令，防 prompt injection；来源是 AI 对话时会要求区分「它想表达什么」和「说法是否成立」。
+- **重试**：外部卡用落库的 `contextSnapshot` 重建消息，不重新抓来源；追问子卡会把最近一张外部卡的快照作为 `【来源上下文】` 带进祖先链。
+- **打开原文**：网页用 Text Fragment（`#:~:text=`），Obsidian 用 `obsidian://open?vault=&file=`，文件用 `NSWorkspace.open`。
+
 ## 5. 数据模型与持久化
 
 ```swift
@@ -276,6 +328,55 @@ claude / codex / gemini 这类 agent 用**正常 HOME**：它们的登录态本�
 每一问都是新会话，所以选中的模型在每轮 `session/prompt` 之前要重设一次。
 
 
+启动和打开设置时 `AgentDetector.detect()` 扫本机：PATH 上能解析到的可执行文件、
+WorkBuddy 自带 CLI、以及 `~/.npm/_npx` 里已经下过的包（claude / codex 这两个走 npx 的）。
+命中的自动并进来（`Settings.syncDetectedAgents`）。**检测出来的只是标签**：不能删、点了也没反应；
+单击任何一条都会打开设置弹窗（检测到的只能改模型，自定义的还能改名字和命令）；`＋` 挂在标签流末尾（自定义项），删除放在弹窗里（只有自定义项有这个按钮）。
+面板当前用哪一条由标签边框高亮表示，切换在对话窗口的模型菜单里。
+删掉检测项记的是预设 id（`dismissedAgentPresets`）；每次检测都会回头看那个预设**现在还装不装**，
+已经卸载的把记录清掉——所以重装之后它会自己回来。
+标题行左侧的「重新检测」手动重扫一次，不用关掉再打开设置。
+
+工作目录是**全局共用**的，放在标签下面，不放进添加弹窗——换 agent 不该顺带换目录。
+「测试全部」逐条握手（`AcpClient.probeStatus`：initialize + `session/new`；
+遇到 `authRequired` 先用 agent 声明的方法 `authenticate` 一次再重试——cursor 每个连接都要求先握手，
+即使 `agent status` 显示已登录）。
+对话窗口的模型菜单直接列出所有已配置 agent，选谁就用谁。
+
+Agent 模式下**联网搜索开关禁用**（面板上的和设置页的都是）：联不联网由 agent 自己决定。
+
+### 7.1 问答模式（2026-11 起）
+
+ACP 只转发最后一条 user 消息，system prompt 到不了 agent。为了防止 WorkBuddy/Codex 这类编码 agent 把解释请求当成编码任务，`startAgentStreaming` 会在文本末尾追加 `AcpCodec.qaHint`：
+
+- 只根据用户消息和上下文回答，禁止调用 Grep/Bash/Read/Write 等工具，禁止检查/修改工作区；
+- 工具权限请求由 `requestPermission` 直接拒绝，不弹「需要许可」；
+- ACP 的 tool 事件不写进答案，等待期只显示「正在思考…」；
+- `AcpClient` 的 `suppressToolActivity` 负责隐藏工具行。
+
+旧的 ACP 卡片里已经写入的工具过程不会自动清除；新卡片不受影响。
+
+### 7.2 启动预热
+
+启动时**不再自动 prewarm**。`AcpHostClient.prewarm` 是 actor 方法，如果 daemon 不回调事件，`for await` 会永久占住 actor，之后所有 `ask` 都卡在队列里——表现就是卡片一直「生成中」。冷启动几秒可以接受。
+
+排查链路：
+
+- `/tmp/sprig-trace.log`：`startExternalStreaming` / ACP ensureReady / openSession / sendPrompt / chunk / finish；
+- `/tmp/sprig-bridge.log`：DSH bridge 请求；
+- `--acp-host-probe` / `--direct-acp-probe`：不经过 UI 验证两条 ACP 路径。
+
+### 7.3 DSH 插件
+
+`dsh-plugins/sprig/` 是 DSH Client 插件（bundle 安装到 desktop profile）：
+
+- 复用 DSH 原生 `conversation.chat.text-interaction` 的 `quote` 表面，注册 `priority: -10` 覆盖 message-quotes 的 priority 0，把表面替换成「复制 / 引用 / 用知枝解释」；
+- Client 通过 `ctx.slots.inject` 注册；`dsh.client.inject` 包含 message-quotes，确保在它之后加载；
+- context 只取 user/assistant/steering 节点，过滤 context 节点和 `<system-reminder>/<available_skills>`，以选区消息为中心取前后各一条，≤1800 字；
+- 点击「用知枝解释」POST `127.0.0.1:53917/v1/explain`，由 `LocalBridge` 调 `handleExternalSelection`；
+- bridge 不做 Origin 拒绝（DSH renderer 可能是 `Origin: null`），返回 `Access-Control-Allow-Origin` + Private-Network 头；无 token，只接受创建解释卡的 JSON。
+- 限制：仅 DSH Web UI；依赖 DSH 内部 quote 表面，DSH 升级可能需要适配。
+
 ## 8. 渲染管线
 
 ### Markdown 与图表：`MarkdownLite` 解析（标题/列表/引用/代码块/表格/行内样式）→ `AnswerTextView.renderRich` 排版。
@@ -296,6 +397,12 @@ WKWebView 载入后轮询 `<svg>` 出现再截图。注意 mermaid 11 的 dist �
 **不要拿 `bounds.width` 当缓存键**——布局过程中它会从 1 变到 640，键一抖就查不到图。
 画不出来（运行时缺失/语法错）退回代码块显示源码。
 
+数学公式走 `MathSnapshot`：`$$...$$` / `\[...\]` 解析成 `.math` 块，`$...$` / `\(...\)` 解析成 `.mathInline`；
+运行时是 `assets/vendor/katex/`（KaTeX js + css + woff2 字体）随包放在 `Contents/Resources/katex/`。
+离屏 WKWebView 渲染后截图，缓存键带主题/明暗/宽度；行内公式按图片附件嵌进文字，块级公式按 `Theme.answerTextWidth`
+渲染并按可用宽度缩放。渲染失败退回代码块/原始 `$...$`，不丢内容。`PanelController.prepareMathIfNeeded` 负责在
+`renderCurrent` 和落库后异步补渲染，画完重绘。
+
 **报错不落盘**：失败文案只放在 `Node.errorText`（面板显示用），末尾带一个 `sprig://retry` 链接——
 点击由 `textView(_:clickedOnLink:)` 分发到 `retryTurn()`，用同一张卡重建原请求重跑。不写进 `card.answer`，
 所以既不会进 JSON 也不会被 `CardMarkdown` 同步进 Markdown。卡片保留问题、答案留空。
@@ -311,23 +418,6 @@ agent 随后推 `_codebuddy.ai/authUrl` 通知，面板把链接显示出来并�
 **Agent 区**：设置页是一排标签（`AgentChipsView`），只显示名称，状态用名称后面的图标表示
 （`✓` 成功 / `!` 未登录 / `✕` 失败 / `○` 没测），一行放不下自动换行。
 
-启动和打开设置时 `AgentDetector.detect()` 扫本机：PATH 上能解析到的可执行文件、
-WorkBuddy 自带 CLI、以及 `~/.npm/_npx` 里已经下过的包（claude / codex 这两个走 npx 的）。
-命中的自动并进来（`Settings.syncDetectedAgents`）。**检测出来的只是标签**：不能删、点了也没反应；
-单击任何一条都会打开设置弹窗（检测到的只能改模型，自定义的还能改名字和命令）；`＋` 挂在标签流末尾（自定义项），删除放在弹窗里（只有自定义项有这个按钮）。
-面板当前用哪一条由标签边框高亮表示，切换在对话窗口的模型菜单里。
-删掉检测项记的是预设 id（`dismissedAgentPresets`）；每次检测都会回头看那个预设**现在还装不装**，
-已经卸载的把记录清掉——所以重装之后它会自己回来。
-标题行左侧的「重新检测」手动重扫一次，不用关掉再打开设置。
-
-工作目录是**全局共用**的，放在标签下面，不放进添加弹窗——换 agent 不该顺带换目录。
-「测试全部」逐条握手（`AcpClient.probeStatus`：initialize + `session/new`；
-遇到 `authRequired` 先用 agent 声明的方法 `authenticate` 一次再重试——cursor 每个连接都要求先握手，
-即使 `agent status` 显示已登录）。
-对话窗口的模型菜单直接列出所有已配置 agent，选谁就用谁。
-
-Agent 模式下**联网搜索开关禁用**（面板上的和设置页的都是）：联不联网由 agent 自己决定。
-
 ## 9. 窗口、焦点与跨桌面
 
 | 决策 | 选择 | 理由 |
@@ -338,6 +428,7 @@ Agent 模式下**联网搜索开关禁用**（面板上的和设置页的都是�
 | 唤出迁移 | 临时 `.moveToActiveSpace` + 轮询 `isOnActiveSpace` | 在别的桌面按热键要迁过来；确认迁移完成再锁回 `.managed` |
 | 失焦 | 沉底（`level = .normal` + `orderBack`），不隐藏 | 用户切 App 时面板仍在，不打断回来继续看 |
 | 菜单跟踪 | `NSMenu.didBegin/EndTracking` 计数屏蔽 | 右键菜单期间面板会 resignKey，否则菜单和面板一起消失 |
+| 状态项修复 | 启动后 1.5/4/10s 检查 `NSStatusItem` 窗口；越界/不可见则切换可见性/重建（最多 5 次，静默不弹窗） | 重新打包后 macOS 可能把旧状态项留在屏幕外；重建 + 新 autosaveName 让系统重新放置；无法绕过 Control Center 的按 App 隐藏记录 |
 | 删除确认 | 自绘 `ConfirmDialog` + `NSApp.runModal` | 应用级 modal；`NSAlert` 会固定占一块图标区，去掉图标也留空白 |
 | `Esc` | 动作条 → 树 → 取消输入焦点 → 收起 | 两级语义，先失焦再关闭 |
 | `⌘C/V/X/A` | 局部 keydown 监视 + 最小主菜单 | `LSUIElement` 没有菜单栏，标准编辑动作没人转发 |
@@ -381,7 +472,8 @@ total = inputHeight(46…96)
 | 术语抽取 | prompt 内联标记 | 事后 NLP/小模型 | 省一次调用，流式期间即可点击 |
 | 卡片存储 | JSON | GRDB/FTS5 | 量级小，接口已预留替换 |
 | 确认框 | 内嵌条 | `NSAlert` | sheet 抢 key window、露直角 |
-| 划词入口 | 面板内选词 | 全局 AX 取词 + OCR | 省掉辅助功能权限与三级降级链 |
+| 划词入口 | 面板内选词 + 可选外部选区 | 全局 AX 取词 + OCR + 后台监听 | 默认保持低权限；外部选区只在明确触发时读一次 AX，不监听、不读剪贴板/屏幕 |
+| 外部选区卡片 | 根卡 + 来源元信息 | 建“来源卡”再挂子卡 | P1 先保持知识树模型简单；来源聚合留给后续 |
 | 输入语义 | 顶部=新根卡，底部=子卡 | 统一一个输入框 | 两个动作语义不同，混在一起用户无法预测 |
 | 流式切换 | 转后台继续跑 | 直接取消 | 半截答案没有价值，而且用户看不出是被打断的 |
 | 搜索结果 | 折叠成一行 + 点开菜单 | 平铺标题和域名 | 平铺会把正文切碎，读起来很吵 |
@@ -404,28 +496,47 @@ total = inputHeight(46…96)
 14. **「读表单再执行」前先 `persistXxx()`**：`controlTextDidEndEditing` 要等失焦才触发，而按钮 action 先跑，会读到旧值再把空值写回输入框。
 15. **判断「有没有内容」看缓冲，不看 `stack.raw`**：后台跑的那张卡 `stack.raw` 一定是空的。
 16. **免费模型限流是产品约束**：智谱 GLM-4.7-Flash 成功率约 1/3，app 只做重试 + 换模型，额度没了只能等。
+17. **AX 取词必须先记前台 pid 再 show 面板**：面板一旦显示，前台 App 可能变成 Sprig，之后读到的是自己。
+18. **Chromium / WebView 第一次 AX 查询可能为空**：无障碍树是被查询时才构建的，空选区要延迟 120ms 重试一次。
+19. **ad-hoc 签名会让辅助功能授权每次重建后重问**：这是 TCC 按签名记账的行为；app 端只能引导，不能绕过。默认不申请屏幕录制、不后台监听。
+20. **网页抓取拒绝内网/本机地址**：`127/8`、`10/8`、`172.16/12`、`192.168/16`、`169.254/16`、`.local` 一律不抓，防止把内网内容发给模型。
+21. **外部选区解析不能阻塞解释**：网页抓取超时/文件反查失败都降级为「只有选区 + 来源」，绝不无限转圈；解析期间切卡/隐藏/重新触发会取消并删掉空卡。
+
 ## 14. 测试与调试
 
-`swift test --disable-sandbox` 覆盖三块纯逻辑（16 项）：
+`swift test --disable-sandbox` 覆盖纯逻辑（当前 210 项）：
 
 - `TermParser`：分片、跨块标记、未闭合持有、换行/超长降级、空术语、多术语。
-- `CardStore`：树操作、路径、重命名、级联删除、JSON 往返。
-- `ContextAssembler`：按窗口动态算预算、工具预留挤占祖先、句子边界截断、由近到远分配。
+- `CardStore`：树操作、路径、重命名、级联删除、JSON 往返、新字段兼容。
+- `ContextAssembler`：按窗口动态算预算、工具预留挤占祖先、句子边界截断、由近到远分配、外部来源快照。
+- `SelectionEnvelope` / `SelectionContextAssembler`：URL 解析、来源推断、长度上限、`«»` 标记、Prompt 模板。
+- `DocumentContext` / `DocumentLocator` / `WebPageContext` / `SourceContextResolver`：标题层级、段落定位、同名文件反查、HTML 抽取、公网 URL 校验、解析优先级。
+- `RichDocumentContext`：PDF / docx / pptx / xlsx 正文抽取、选区定位、PDF 跨页居中窗口（fixtures 随测试 target 打包）。
+- `ContextRetrieval` / `TokenEstimator` / `DeepContextComposer`：结构检索补段、主段落足够长时不追加、token 估算、深度摘要组装与本地抽取式兜底。
 
 UI 无法截图时的替代方案（本机没有屏幕录制权限）：
 
 | 参数 | 验证内容 |
 |---|---|
-| `--selftest` | 面板尺寸、各区块 frame、选区动作条、`⌘C` 是否真的进了剪贴板 |
+| `--selftest` | 面板尺寸、各区块 frame、选区动作条、来源行高度、`⌘C` 是否真的进了剪贴板 |
 | `--tree-dump [--tree-filter 词]` | 树的行数/列宽/单元格坐标、搜索命中集合与标记点 |
 | `--headless "问题"` | provider + 解析器全链路（逐段打印 TEXT/TERM） |
 | `--headless-child` | 子卡上下文 prompt 的实际输出 |
+| `--capture-selection [pid]` | AX 取词诊断：授权状态、选区、来源、周边文字 |
+| `--acp-host-probe "问题"` | 不经过 UI，验证 acp-host 链路 |
+| `--direct-acp-probe "问题"` | 不经过 UI，验证直连 ACP 链路 |
+| `--request-accessibility` | 触发辅助功能授权提示并打印前后状态 |
+| `--prompt-explain <json>` | 外部选词的 system/user 消息（不请求网络） |
+| `--resolve-context <json> [--no-fetch]` | 来源上下文解析 + 最终 Prompt；同时打印 `context_tokens` / `prompt_tokens` |
+| `--explain-url "sprig://explain?..." --dry-run` | 入口解析（不流式） |
 ## 15. 扩展点
 
 - **新增 provider**：实现 `LLMProvider`（`id` + `displayName` + `stream(messages:)`，本机推理再盖 `isLocal`），
   在 `ProviderConfig.makeProvider()` 里加一个分支；配置、UI、菜单都不必动。
   上下文策略按 `provider.isLocal` 自动切换（`ContextAssembler.Policy.forLocal`）。
 - **换存储**：只改 `CardStore` 的七个方法实现。
+- **加连接器**：浏览器扩展 / Obsidian 插件只需要把选区包成 `SelectionEnvelope`（可以带高保真 `context`），通过 `LocalBridge` 或 URL scheme 送进来；解析、Prompt、卡片、知识树都不用改。
+- **DSH 插件**：`dsh-plugins/sprig/` 已实现 Client 插件 + 本机 bridge；后续升级只需改插件与 `LocalBridge` 协议，不碰解析/渲染主链路。
 - **加检索**：卡片树已经是 `parentID` 结构，加 embedding 字段 + top-k 检索，接在 `ContextAssembler` 之前。
 - **加复习**：`AnswerCard` 是纯数据，可外挂 `dueAt/interval` 而不影响现有树。
 - **加导出**：`CardStore.all()` + `path(to:)` 已能还原任意子树。

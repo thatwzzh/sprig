@@ -27,6 +27,11 @@ public struct AnswerCard: Codable, Sendable, Identifiable, Equatable {
     /// 这张卡生成时做过的搜索。持久化下来，切卡重渲染后点来源还能打开。
     /// 可选字段，旧数据解码为 nil。
     public var searchLog: [CardSearchRecord]?
+    /// 从外部来源（网页/对话/文档/剪贴板）选中的卡片才有；根卡为 nil 表示普通提问。
+    public var source: SelectionSource?
+    /// 解释这张外部选区卡时实际用到的上下文快照。重试时复现同一份上下文，不重新抓取。
+    /// 只写进 `.cards.json`，不写进 Markdown 投影。
+    public var contextSnapshot: String?
     public var createdAt: Date
 
     public init(id: UUID = UUID(),
@@ -36,6 +41,8 @@ public struct AnswerCard: Codable, Sendable, Identifiable, Equatable {
                 answer: String = "",
                 selectedText: String? = nil,
                 searchLog: [CardSearchRecord]? = nil,
+                source: SelectionSource? = nil,
+                contextSnapshot: String? = nil,
                 createdAt: Date = Date()) {
         self.id = id
         self.parentID = parentID
@@ -44,6 +51,8 @@ public struct AnswerCard: Codable, Sendable, Identifiable, Equatable {
         self.answer = answer
         self.selectedText = selectedText
         self.searchLog = searchLog
+        self.source = source
+        self.contextSnapshot = contextSnapshot
         self.createdAt = createdAt
     }
 

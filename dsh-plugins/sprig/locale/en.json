@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Sprig selection explain",
+    "description": "Select text in a DSH conversation and send it with nearby messages to the local Sprig app for an explanation card. Sprig must be running.",
+    "detail": "docs/DETAIL.md"
+  }
+}

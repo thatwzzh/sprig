@@ -182,6 +182,10 @@ enum CardMarkdown {
             lines.append("> 选中：\(oneLine(selected))")
             lines.append("")
         }
+        if let source = card.source {
+            lines.append(source.markdownSourceLine)
+            lines.append("")
+        }
         let answer = expandChartBlocks(in: card.plainAnswer.trimmingCharacters(in: .whitespacesAndNewlines))
         if !answer.isEmpty {
             lines.append(answer)

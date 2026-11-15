@@ -33,6 +33,8 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
                                            target: nil,
                                            action: nil)
     private let thinkingToggle = NSButton(checkboxWithTitle: "关闭思考链", target: nil, action: nil)
+    private let deepContextToggle = NSButton(checkboxWithTitle: "深度上下文（长文档/长对话摘要）",
+                                             target: nil, action: nil)
     private let readingThemePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private let searchBackendPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private let webSearchKeyField = NSSecureTextField(string: "")
@@ -43,12 +45,18 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
     private let agentRescanButton = PointerButton(title: "重新检测", target: nil, action: nil)
     private let agentTestAllButton = PointerButton(title: "测试全部", target: nil, action: nil)
     private var agentStatuses: [UUID: AcpProbeStatus] = [:]
+    private let sectionControl = NSSegmentedControl(labels: ["常规", "跨应用选词"],
+                                                    trackingMode: .selectOne,
+                                                    target: nil,
+                                                    action: nil)
+    private let generalView = NSView()
+    private let crossAppView = NSView()
 
     /// 自定义下拉里每一项对应的配置 id
     private var customIDs: [UUID] = []
 
     private convenience init() {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 890),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 980),
                               styleMask: [.titled, .closable],
                               backing: .buffered,
                               defer: false)
@@ -60,7 +68,8 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         window.center()
         self.init(window: window)
         window.delegate = self
-        buildContent()
+        buildTabs()
+        buildContent(in: generalView)
     }
 
     // MARK: - 布局
@@ -98,11 +107,50 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         return width
     }
 
-    private func buildContent() {
-        guard let contentView = window?.contentView else { return }
+    private func buildTabs() {
+        guard let root = window?.contentView else { return }
+        generalView.frame = NSRect(x: 0, y: 0, width: 500, height: 930)
+        generalView.autoresizingMask = [.width, .height]
+        crossAppView.frame = generalView.frame
+        crossAppView.autoresizingMask = [.width, .height]
+        root.addSubview(generalView)
+        root.addSubview(crossAppView)
 
-        // 从上往下一路排下来：y 记录当前块的下沿
-        var y: CGFloat = 866
+        sectionControl.selectedSegment = 0
+        sectionControl.target = self
+        sectionControl.action = #selector(settingsSectionChanged)
+        sectionControl.controlSize = .small
+        sectionControl.font = .systemFont(ofSize: 12)
+        sectionControl.frame = NSRect(x: 24, y: 946, width: 452, height: 24)
+        root.addSubview(sectionControl)
+
+        let embedded = SelectionSettingsSheet.shared.embeddedContentView()
+        embedded.frame = NSRect(x: 0, y: 0, width: 500, height: 930)
+        crossAppView.addSubview(embedded)
+        crossAppView.isHidden = true
+        if let raw = ProcessInfo.processInfo.environment["SPRIG_SETTINGS_TAB"],
+           let index = Int(raw) {
+            applySettingsSection(index)
+        }
+    }
+
+    @objc private func settingsSectionChanged() {
+        applySettingsSection(sectionControl.selectedSegment)
+    }
+
+    private func applySettingsSection(_ index: Int) {
+        let crossApp = index == 1
+        generalView.isHidden = crossApp
+        crossAppView.isHidden = !crossApp
+        sectionControl.selectedSegment = index
+        if crossApp {
+            SelectionSettingsSheet.shared.refreshForDisplay()
+        }
+    }
+
+    private func buildContent(in contentView: NSView) {
+        // 从上往下一路排下来：y 记录当前块的下沿（generalView 高度 930）
+        var y: CGFloat = 906
 
         // ── 快捷键 ──
         y -= Layout.button
@@ -349,6 +397,20 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         thinkingToggle.state = Settings.disableThinking ? .on : .off
         thinkingToggle.toolTip = "推理模型会先输出思考过程。知识问答用不上，关掉更快、更省 token。"
         contentView.addSubview(thinkingToggle)
+
+        deepContextToggle.state = Settings.deepContextEnabled ? .on : .off
+
+        y -= Layout.rowGap + 22
+        deepContextToggle.target = self
+        deepContextToggle.action = #selector(deepContextToggled)
+        deepContextToggle.font = .systemFont(ofSize: 12)
+        deepContextToggle.toolTip = "上下文超过约 1200 token 时，优先调用当前模型把周边资料压缩成摘要；"
+            + "模型不可用时用本地抽取式摘要，不额外计费。选区原文保留。"
+        deepContextToggle.frame = NSRect(x: 22, y: y, width: 430, height: 20)
+        contentView.addSubview(deepContextToggle)
+        if ProcessInfo.processInfo.environment["SPRIG_LAYOUT_TRACE"] != nil {
+            FileHandle.standardError.write(Data("deepToggle y=\(Int(y))\n".utf8))
+        }
 
         y -= Layout.rowGap + Layout.button
         searchBackendPopUp.frame = NSRect(x: Layout.left, y: y + 1, width: 110, height: Layout.control)
@@ -937,6 +999,10 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         NotificationCenter.default.post(name: .sprigProvidersDidChange, object: nil)
     }
 
+    @objc private func deepContextToggled() {
+        Settings.deepContextEnabled = deepContextToggle.state == .on
+    }
+
     @objc private func webSearchToggled() {
         Settings.webSearchEnabled = webSearchToggle.state == .on
         if Settings.webSearchEnabled && Settings.webSearchAPIKey.isEmpty {
@@ -1110,8 +1176,20 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         print("status             =", statusLabel.stringValue)
         print("configs.isConfigured =", Settings.providerConfigs.map { "\($0.displayName):\($0.isConfigured)" })
         print("settings.level     =", window?.level.rawValue ?? -1)
+        print("settings.section   =", sectionControl.selectedSegment,
+              "generalHidden:", generalView.isHidden, "crossAppHidden:", crossAppView.isHidden)
+        print("settings.crossApp  =", crossAppView.frame,
+              "subviews:", crossAppView.subviews.count,
+              "embedded:", crossAppView.subviews.first?.frame ?? .zero)
         print("panel.level        =", PanelController.shared.panel.level.rawValue)
         print("settings.abovePanel=", (window?.level.rawValue ?? -1) > PanelController.shared.panel.level.rawValue)
+        print("external.enabled   =", Settings.externalSelectionEnabled)
+        print("external.maxLength =", Settings.externalSelectionMaxLength)
+        print("external.webContext=", Settings.fetchWebContext)
+        print("external.deepContext=", Settings.deepContextEnabled)
+        print("external.trusted   =", SelectionCapture.isTrusted)
+        print("external.docFolders=", Settings.documentFolders.count)
+        print("external.vaults    =", Settings.obsidianVaults.map(\.name))
     }
 }
 

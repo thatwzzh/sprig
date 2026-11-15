@@ -141,4 +141,76 @@ final class MarkdownLiteTests: XCTestCase {
         XCTAssertEqual(blocks[0].plainText, "这里有 **没闭合")
         XCTAssertEqual(blocks[0].inlines, [.text("这里有 **没闭合")])
     }
+
+    // MARK: - 数学公式
+
+    func testDisplayMathBlockSingleLine() {
+        let blocks = MarkdownLite.parse("""
+        公式如下：
+
+        $$E = mc^2$$
+        """)
+        guard case .math(let latex) = blocks.last?.kind else { return XCTFail("应该解析成公式块") }
+        XCTAssertEqual(latex, "E = mc^2")
+    }
+
+    func testDisplayMathBlockMultiLine() {
+        let blocks = MarkdownLite.parse("""
+        $$
+        \\frac{a}{b} = c
+        $$
+        """)
+        guard case .math(let latex) = blocks[0].kind else { return XCTFail("应该解析成公式块") }
+        XCTAssertTrue(latex.contains("\\frac{a}{b}"))
+    }
+
+    func testBracketMathBlock() {
+        let blocks = MarkdownLite.parse("""
+        \\[
+        x^2 + y^2 = z^2
+        \\]
+        """)
+        guard case .math(let latex) = blocks[0].kind else { return XCTFail("应该解析成公式块") }
+        XCTAssertEqual(latex, "x^2 + y^2 = z^2")
+    }
+
+    func testFencedMathBlock() {
+        let blocks = MarkdownLite.parse("""
+        ```math
+        a + b
+        ```
+        """)
+        guard case .math(let latex) = blocks[0].kind else { return XCTFail("应该解析成公式块") }
+        XCTAssertEqual(latex, "a + b")
+    }
+
+    func testInlineMathDollar() {
+        let blocks = MarkdownLite.parse("召回率 $R = \\frac{a}{b}$ 越高越好")
+        XCTAssertTrue(blocks[0].inlines.contains(.mathInline("R = \\frac{a}{b}")))
+    }
+
+    func testInlineMathParenAndSimpleVariable() {
+        let blocks = MarkdownLite.parse("设 \\(x\\) 与 $y$ 是两个变量")
+        XCTAssertTrue(blocks[0].inlines.contains(.mathInline("x")))
+        XCTAssertTrue(blocks[0].inlines.contains(.mathInline("y")))
+    }
+
+    /// 价格不是公式：$5 and $10 不能被拆成行内公式
+    func testPricesAreNotInlineMath() {
+        let blocks = MarkdownLite.parse("价格是 $5 和 $10，都不算公式")
+        XCTAssertFalse(blocks[0].inlines.contains { if case .mathInline = $0 { return true }; return false })
+    }
+
+    func testDisplayMathBlockDoesNotLeakIntoSections() {
+        let blocks = MarkdownLite.parse("""
+        前文
+        $$
+        a
+        $$
+        后文
+        """)
+        XCTAssertEqual(blocks.count, 3)
+        guard case .math = blocks[1].kind else { return XCTFail("中间应该是公式") }
+        XCTAssertEqual(blocks[2].plainText, "后文")
+    }
 }

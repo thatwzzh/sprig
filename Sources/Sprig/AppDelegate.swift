@@ -5,9 +5,20 @@ import KeyboardShortcuts
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
+    private var statusRepairAttempts = 0
     private var freeModelTimer: Timer?
+    /// 启动完成前收到的外部选区（LaunchServices 可能在 didFinishLaunching 之前送 URL）
+    private var pendingEnvelopes: [SelectionEnvelope] = []
+    private var didFinishLaunching = false
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // Services 在应用被系统拉起时也要尽快注册，否则第一次服务请求可能丢
+        NSApp.servicesProvider = SelectionServiceProvider.shared
+        NSUpdateDynamicServices()
+    }
 
     func applicationWillTerminate(_ notification: Notification) {
+        LocalBridge.shared.stop()
         AcpClient.shared.killForQuit()
     }
 
@@ -18,10 +29,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return false
     }
 
-    /// sprig://demo?step=N 由 LaunchServices 送到这里
+    /// `sprig://demo?step=N` / `sprig://explain?...` 由 LaunchServices 送到这里
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls {
-            PanelController.shared.handleDemoURL(url)
+            if url.host == "demo" {
+                PanelController.shared.handleDemoURL(url)
+                continue
+            }
+            if let envelope = SelectionEnvelope.from(url: url) {
+                enqueue(envelope)
+            }
+        }
+    }
+
+    private func enqueue(_ envelope: SelectionEnvelope) {
+        if didFinishLaunching {
+            PanelController.shared.handleExternalSelection(envelope)
+        } else {
+            pendingEnvelopes.append(envelope)
+        }
+    }
+
+    private func flushPendingEnvelopes() {
+        guard didFinishLaunching, !pendingEnvelopes.isEmpty else { return }
+        let items = pendingEnvelopes
+        pendingEnvelopes.removeAll()
+        for envelope in items {
+            PanelController.shared.handleExternalSelection(envelope)
         }
     }
 
@@ -43,26 +77,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         setupMainMenu()
         setupStatusItem()
+        LocalBridge.shared.start()
 
-        // 走 daemon 时先把会话暖起来：第一问的冷启动（十几秒）挪到启动阶段
-        if Settings.useAcpHost {
-            let agent = Settings.activeAgent?.presetID ?? "workbuddy"
-            let cwd = Settings.acpWorkspacePath
-            let warmModel = Settings.warmModelOnLaunch
-            Task.detached(priority: .utility) {
-                await AcpHostClient.shared.prewarm(
-                    agent: agent, cwd: cwd, warmModel: warmModel,
-                    binaryPath: Settings.acpHostPath.isEmpty ? nil : Settings.acpHostPath,
-                    skipPermissions: Settings.skipAgentPermissions)
-                // 接入列表以守护进程的探测结果为准（新增 agent 只改 daemon 一处）
-                let detected = await AcpHostClient.shared.detectAgents(
-                    binaryPath: Settings.acpHostPath.isEmpty ? nil : Settings.acpHostPath)
-                if !detected.isEmpty {
-                    await MainActor.run { Settings.mergeDetectedAgents(detected) }
-                }
-            }
-        }
-
+        // 不再在启动时主动 prewarm：acp-host 的 prewarm 会长时间占住 actor，
+        // 用户第一问如果刚好撞上暖机，会一直卡在「生成中」。冷启动几秒可以接受。
         if CommandLine.arguments.contains("--status-trace") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
                 let item = self?.statusItem
@@ -97,12 +115,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             PanelController.shared.toggleTreeShortcut()
         }
 
+        KeyboardShortcuts.onKeyUp(for: .explainSelection) {
+            PanelController.shared.explainSelectionFromFrontmostApp()
+        }
+
         // 老版本数据在 ~/Documents/Sprig，先搬出来（只需一次）
         Settings.migrateLibraryIfNeeded()
 
         // 知识库目录来自设置（默认 ~/Library/Application Support/Sprig/repository）；首次切换时 CardStore 会把旧数据搬过去
-        Task.detached(priority: .userInitiated) {
+        // 外部选区要等目录就绪后再处理，否则会先写进占位库再被切换覆盖
+        Task.detached(priority: .userInitiated) { [weak self] in
             await CardStore.shared.useDirectory(Settings.cardsDirectory)
+            await MainActor.run {
+                guard let self else { return }
+                self.didFinishLaunching = true
+                self.flushPendingEnvelopes()
+            }
         }
 
         NotificationCenter.default.addObserver(
@@ -385,6 +413,132 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return
         }
+        if arguments.contains("--math-panel-demo") {
+            let index = arguments.firstIndex(of: "--math-panel-demo") ?? 0
+            let path = index + 1 < arguments.count && !arguments[index + 1].hasPrefix("--")
+                ? arguments[index + 1]
+                : "/tmp/sprig-math-panel.png"
+            Task { @MainActor in
+                await PanelController.shared.debugMathDemo(snapshotPath: path)
+                exit(0)
+            }
+            return
+        }
+        if let index = arguments.firstIndex(of: "--math-demo"), index + 1 < arguments.count {
+            let latex = arguments[index + 1]
+            let output = index + 2 < arguments.count ? arguments[index + 2] : "/tmp/sprig-math.png"
+            Task { @MainActor in
+                let start = Date()
+                let display = !arguments.contains("--inline")
+                let image = await MathSnapshot.image(for: latex, display: display)
+                if let image,
+                   let tiff = image.tiffRepresentation,
+                   let rep = NSBitmapImageRep(data: tiff),
+                   let data = rep.representation(using: .png, properties: [:]) {
+                    try? data.write(to: URL(fileURLWithPath: output))
+                    print("math -> \(output) \(Int(image.size.width))x\(Int(image.size.height)) "
+                        + "in \(String(format: "%.0f", Date().timeIntervalSince(start) * 1000))ms")
+                } else {
+                    print("math render failed")
+                }
+                exit(0)
+            }
+            return
+        }
+        if let index = arguments.firstIndex(of: "--explain-url"), index + 1 < arguments.count {
+            guard let url = URL(string: arguments[index + 1]),
+                  let envelope = SelectionEnvelope.from(url: url) else {
+                print("ERROR: 不是合法的 sprig://explain URL")
+                exit(1)
+            }
+            if arguments.contains("--dry-run") {
+                printEnvelopeDebug(envelope)
+                exit(0)
+            }
+            PanelController.shared.handleExternalSelection(envelope)
+            return
+        }
+        if let index = arguments.firstIndex(of: "--prompt-explain"), index + 1 < arguments.count {
+            do {
+                let data = try Data(contentsOf: URL(fileURLWithPath: arguments[index + 1]))
+                let envelope = try JSONDecoder().decode(SelectionEnvelope.self, from: data)
+                printEnvelopeDebug(envelope)
+                exit(0)
+            } catch {
+                print("ERROR: \(error.localizedDescription)")
+                exit(1)
+            }
+        }
+        if arguments.contains("--request-accessibility") {
+            print("before=\(SelectionCapture.isTrusted)")
+            _ = SelectionCapture.requestAccess()
+            print("after=\(SelectionCapture.isTrusted)")
+            exit(0)
+        }
+        if let index = arguments.firstIndex(of: "--resolve-context"), index + 1 < arguments.count {
+            do {
+                let data = try Data(contentsOf: URL(fileURLWithPath: arguments[index + 1]))
+                let envelope = try JSONDecoder().decode(SelectionEnvelope.self, from: data)
+                Task { @MainActor in
+                    var options = Settings.sourceResolverOptions
+                    if arguments.contains("--no-fetch") { options.fetchWebContext = false }
+                    let resolved = await SourceContextResolver.resolve(envelope: envelope,
+                                                                      options: options)
+                    print("quality=\(resolved.quality.rawValue)")
+                    print("source_kind=\(resolved.source.kind.rawValue)")
+                    print("title=\(resolved.source.title ?? "nil")")
+                    print("path=\(resolved.source.filePath ?? "nil")")
+                    print("headings=\(resolved.source.headingPath ?? [])")
+                    print("context=\(resolved.context ?? "nil")")
+                    print("context_chars=\(resolved.context?.count ?? 0)")
+                    print("context_tokens=\(TokenEstimator.estimate(resolved.context ?? ""))")
+                    let policy = SelectionContextAssembler.Policy.dynamic(
+                        isLocal: false,
+                        contextTokens: 128_000,
+                        selectionCap: Settings.externalSelectionMaxLength)
+                    let message = Prompt.selectionMessage(envelope: envelope,
+                                                          context: resolved.context,
+                                                          policy: policy)
+                    print("prompt_chars=\(message.count)")
+                    print("prompt_tokens=\(TokenEstimator.estimate(message))")
+                    print("=== PROMPT ===")
+                    print(message)
+                    exit(0)
+                }
+                return
+            } catch {
+                print("ERROR: \(error.localizedDescription)")
+                exit(1)
+            }
+        }
+        if arguments.contains("--capture-selection") {
+            let pidIndex = arguments.firstIndex(of: "--capture-selection").flatMap { $0 + 1 < arguments.count ? $0 + 1 : nil }
+            let targetPID = pidIndex.flatMap { pid_t(arguments[$0]) }
+            Task { @MainActor in
+                print("trusted=\(SelectionCapture.isTrusted)")
+                let captured: CapturedSelection?
+                if let targetPID {
+                    captured = await SelectionCapture.capture(pid: targetPID,
+                                                              maxLength: Settings.externalSelectionMaxLength)
+                } else {
+                    captured = await SelectionCapture.captureFrontmost(
+                        maxLength: Settings.externalSelectionMaxLength,
+                        allowClipboardFallback: true)
+                }
+                if let captured {
+                    print("selection=\(captured.selection)")
+                    print("kind=\(captured.source.kind.rawValue)")
+                    print("title=\(captured.source.title ?? "nil")")
+                    print("url=\(captured.source.url ?? "nil")")
+                    print("path=\(captured.source.filePath ?? "nil")")
+                    print("context=\(captured.surroundingText ?? "nil")")
+                } else {
+                    print("capture=nil")
+                }
+                exit(0)
+            }
+            return
+        }
         if arguments.contains("--settings") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                 // 同时带 --show 时先弹面板，用来对照「设置是否压在面板上面」
@@ -478,6 +632,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setupStatusItem() {
+        if let existing = statusItem {
+            NSStatusBar.system.removeStatusItem(existing)
+            statusItem = nil
+        }
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = item.button {
             // 矢量绘制，深浅菜单栏由 isTemplate 自动反色
@@ -485,12 +643,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.imagePosition = .imageOnly
             button.toolTip = AppInfo.name
         }
+        // 重建打包后 macOS 可能沿用旧的菜单栏位置记录；换一个新的 autosave 名，
+        // 让系统把状态项重新放到默认可见位置。
+        item.autosaveName = "com.catking.sprig.status.v2"
+        item.isVisible = true
 
-        // 菜单只留三件事：打开面板 / 设置 / 退出
+        // 菜单只留四件事：打开面板 / 解释剪贴板 / 当前选区 / 设置 / 退出
         let menu = NSMenu()
         let openItem = NSMenuItem(title: "打开\(AppInfo.name)", action: #selector(openPanel), keyEquivalent: "")
         openItem.target = self
         menu.addItem(openItem)
+
+        let clipboardItem = NSMenuItem(title: "解释剪贴板内容",
+                                       action: #selector(explainClipboard),
+                                       keyEquivalent: "")
+        clipboardItem.target = self
+        clipboardItem.toolTip = "把剪贴板里的文字作为选区，生成一张带来源的解释卡"
+        menu.addItem(clipboardItem)
+
+        let selectionItem = NSMenuItem(title: "解释当前选区",
+                                       action: #selector(explainCurrentSelection),
+                                       keyEquivalent: "")
+        selectionItem.target = self
+        selectionItem.toolTip = "读取当前 App 里选中的文字并解释（默认快捷键 ⌥⇧Space）"
+        menu.addItem(selectionItem)
 
         menu.addItem(.separator())
 
@@ -505,12 +681,84 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         item.menu = menu
         statusItem = item
+        scheduleStatusItemChecks()
+    }
 
+    /// 重新打包/升级后 macOS 偶尔会把旧状态项的窗口留在屏幕外或隐藏。
+    /// 启动后检查几次；发现窗口越界或不可见就重建（最多 3 次，避免和系统设置较劲）。
+    private func scheduleStatusItemChecks() {
+        for delay in [1.5, 4.0, 10.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.probeStatusItem()
+            }
+        }
+    }
+
+    private func probeStatusItem() {
+        guard let item = statusItem else { return }
+        let frame = item.button?.window?.frame ?? .zero
+        let bad = !item.isVisible
+            || frame.width < 8
+            || frame.height < 8
+            || frame.minY < 0
+            || frame.maxY <= 0
+        DebugTrace.log("status probe visible=\(item.isVisible) frame=\(frame)")
+        guard bad else { return }
+        guard statusRepairAttempts < 5 else { return }
+        statusRepairAttempts += 1
+        if statusRepairAttempts == 1 {
+            // 先试「隐藏再显示」：让 Control Center 重新分配菜单栏位置
+            item.isVisible = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                self?.statusItem?.isVisible = true
+            }
+        } else {
+            DebugTrace.log("status item offscreen; rebuild attempt \(statusRepairAttempts)")
+            setupStatusItem()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in
+            self?.probeStatusItem()
+        }
     }
 
     @objc private func openPanel() {
         NSApp.activate(ignoringOtherApps: true)
         PanelController.shared.show()
+    }
+
+    @objc private func explainClipboard() {
+        PanelController.shared.explainClipboard()
+    }
+
+    @objc private func explainCurrentSelection() {
+        PanelController.shared.explainSelectionFromFrontmostApp()
+    }
+
+    /// 无界面校验：打印外部选区的 envelope 和最终要发出去的 system/user 消息。
+    private func printEnvelopeDebug(_ envelope: SelectionEnvelope) {
+        let policy = SelectionContextAssembler.Policy.dynamic(
+            isLocal: false,
+            contextTokens: 128_000,
+            selectionCap: Settings.externalSelectionMaxLength)
+        let message = Prompt.selectionMessage(envelope: envelope,
+                                              context: envelope.context,
+                                              policy: policy)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        print("=== ENVELOPE ===")
+        if let data = try? encoder.encode(envelope), let text = String(data: data, encoding: .utf8) {
+            print(text)
+        }
+        let contextLength = envelope.context?.count ?? 0
+        print("context_chars=\(contextLength)")
+        print("context_tokens=\(TokenEstimator.estimate(envelope.context ?? ""))")
+        print("system_chars=\(Prompt.selectionContextual.count) "
+            + "system_tokens=\(TokenEstimator.estimate(Prompt.selectionContextual))")
+        print("user_chars=\(message.count) user_tokens=\(TokenEstimator.estimate(message))")
+        print("=== SYSTEM ===")
+        print(Prompt.selectionContextual)
+        print("=== USER ===")
+        print(message)
     }
 
     @objc private func openSettings() {

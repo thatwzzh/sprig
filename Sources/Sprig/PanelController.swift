@@ -9,6 +9,8 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
     private var backgroundErrors: [UUID: String] = [:]
     /// 正在画 mermaid 的卡片，避免重复起任务
     private var diagramJobs: Set<UUID> = []
+    /// 正在离屏渲染数学公式的卡片，避免重复起任务
+    private var mathJobs: Set<UUID> = []
     private var demoActive = false
     private var demoRoot: AnswerCard?
     private var demoChild: AnswerCard?
@@ -65,6 +67,10 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
     private var menuTracking = 0
     private var panelWasKeyAtMenuStart = false
     private var suppressResign = false
+    /// 上下文预览 popover 打开时面板会失焦，别把面板沉底
+    private var contextPreviewOpen = false
+    /// 系统辅助功能授权弹窗显示期间，临时把面板降到普通层级，避免挡住弹窗
+    private var accessibilityLevelTask: Task<Void, Never>?
 
     private var pendingSelection = ""
     private var pendingDelete: AnswerCard?
@@ -73,6 +79,10 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
     /// 「追问」时记住要挂到哪张卡下面
     private var pendingParentID: UUID?
     private var pendingParentSelection: String?
+    /// 外部选区解析上下文的后台任务；解析期间先显示占位卡
+    private var externalPrepareTask: Task<Void, Never>?
+    private var externalPrepareCardID: UUID?
+    private var externalPrepareEnvelope: SelectionEnvelope?
 
     private struct PermissionWait {
         var id: UUID
@@ -118,6 +128,10 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
 
         content.breadcrumb.onSelect = { [weak self] index in self?.go(to: index) }
         content.selectionBar.onExplain = { [weak self] in self?.explainSelection() }
+        content.questionHeader.onOpenSource = { [weak self] in self?.openCurrentSource() }
+        content.questionHeader.onPreviewVisibilityChanged = { [weak self] open in
+            self?.contextPreviewOpen = open
+        }
 
         content.tree.onSelect = { [weak self] card in self?.navigate(to: card) }
         content.tree.onRename = { [weak self] card, title in self?.commitRename(card, title: title) }
@@ -249,6 +263,11 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
 
     func hide() {
         guard isVisible else { return }
+        content.questionHeader.closeContextPreview()
+        cancelExternalPreparation(deleteCard: true)
+        if stack.isEmpty {
+            resetToEmpty()
+        }
         isVisible = false
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.08
@@ -261,7 +280,8 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
     }
 
     func hideIfUnfocused() {
-        guard isVisible, !suppressResign, menuTracking == 0, panel.attachedSheet == nil else { return }
+        guard isVisible, !suppressResign, !contextPreviewOpen,
+              menuTracking == 0, panel.attachedSheet == nil else { return }
         // 本 App 内部窗口（设置页）拿到焦点时不处理
         guard !NSApp.isActive else { return }
         // 需求：切到别的 App 时面板沉到底层，但不隐藏
@@ -389,15 +409,18 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         return min(max(textHeight + 24, Theme.answerMinHeight), Theme.answerMaxHeight)
     }
 
-    private func measuredQuestionHeight(_ text: String) -> CGFloat {
-        guard !text.isEmpty else { return 0 }
+    private func measuredQuestionHeight(_ text: String, source: SelectionSource?) -> CGFloat {
+        let hasSource = source != nil
+        guard !text.isEmpty else { return hasSource ? 18 : 0 }
         let width = Theme.panelWidth - Theme.horizontalInset * 2
         let rect = (text as NSString).boundingRect(
             with: NSSize(width: width, height: .greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading],
             attributes: [.font: Theme.questionFont]
         )
-        return min(46, max(22, ceil(rect.height) + 8))
+        let base = min(46, max(22, ceil(rect.height) + 8))
+        // 来源行固定 16pt + 2pt 间距；外部卡的问题条最多 64pt
+        return hasSource ? min(64, base + 18) : base
     }
 
     /// - Parameter resize: false 时只排内部视图，不动面板尺寸。
@@ -523,6 +546,7 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
 
     private func navigate(to card: AnswerCard) {
         guard stack.last?.card.id != card.id else { return }
+        cancelExternalPreparation(deleteCard: true)
         // 换显示而已，别把正在生成的那张卡掐掉
         detachCurrentStreaming()
         Task { @MainActor [weak self] in
@@ -819,6 +843,7 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
     private func submit() {
         let question = inputView.string.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty else { return }
+        cancelExternalPreparation(deleteCard: true)
 
         inputView.setText("")
         inputHeight = Theme.inputMinHeight
@@ -916,6 +941,23 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
                                               selection: card.selectedText,
                                               question: card.question.isEmpty ? nil : card.question)
             messages = [ChatMessage.system(Prompt.contextual), .user(message)]
+        } else if let source = card.source {
+            // 外部选区根卡：用落库的 contextSnapshot 重建，不重新抓网页/文件
+            let activeConfig = Settings.activeConfig
+            let policy = SelectionContextAssembler.Policy.dynamic(
+                isLocal: activeConfig.kind.isLocal,
+                contextTokens: contextBudgetTokens,
+                toolReserve: Settings.webSearchReady ? 3_000 : 0,
+                selectionCap: Settings.externalSelectionMaxLength,
+                deepContext: Settings.deepContextEnabled)
+            let envelope = SelectionEnvelope(source: source,
+                                             selection: card.selectedText ?? card.title,
+                                             context: card.contextSnapshot,
+                                             question: card.question.isEmpty ? nil : card.question)
+            let message = Prompt.selectionMessage(envelope: envelope,
+                                                  context: card.contextSnapshot,
+                                                  policy: policy)
+            messages = [ChatMessage.system(Prompt.selectionContextual), .user(message)]
         } else {
             messages = [ChatMessage.system(Prompt.answer), .user(card.question)]
         }
@@ -941,7 +983,8 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
                 question: node.card.question.isEmpty
                     ? (node.card.selectedText.map { "关于「\($0)」" } ?? node.card.title)
                     : node.card.question,
-                answer: stripMarkers(node.raw)
+                answer: stripMarkers(node.raw),
+                sourceSnapshot: node.card.contextSnapshot
             )
         }
     }
@@ -960,6 +1003,332 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
                         question: "")
     }
 
+    // MARK: - 外部选区（sprig:// / Services / 剪贴板）
+
+    /// 任意入口送来的外部选区：在知识树里长一张新根卡，带来源和上下文解释。
+    ///
+    /// 和面板内选词的区别：外部选区没有父卡，直接作为根卡入栈；
+    /// 来源信息与上下文走 `Prompt.selectionContextual`，不再用祖先链那套。
+    /// 建卡后先异步解析来源上下文（网页/文件），解析完再开始流式。
+    func handleExternalSelection(_ envelope: SelectionEnvelope,
+                                 fallbackContext: String? = nil) {
+        guard Settings.externalSelectionEnabled else { return }
+        let normalized = envelope.normalized(maxSelectionLength: Settings.externalSelectionMaxLength)
+        guard !normalized.selection.isEmpty else { return }
+
+        cancelExternalPreparation(deleteCard: true)
+        // 面板可能已经显示但沉底（比如上次授权引导留下的），这次要重新拉回最上层
+        show()
+        detachCurrentStreaming()
+
+        let card = AnswerCard(title: shortTitle(normalized.selection),
+                              question: normalized.question ?? "",
+                              selectedText: normalized.selection,
+                              source: normalized.source)
+        stack = [Node(card: card, raw: "", scroll: 0)]
+        renderCurrent(placeholder: true)
+        answerView.updateThinkingPlaceholder("正在读取来源上下文…")
+        persistCurrentCard()
+
+        externalPrepareCardID = card.id
+        externalPrepareEnvelope = normalized
+        externalPrepareTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let deepContext = Settings.deepContextEnabled
+            var options = Settings.sourceResolverOptions
+            if deepContext { options.contextLimit = 6_000 }
+            var resolved = await SourceContextResolver.resolve(
+                envelope: normalized,
+                fallbackContext: fallbackContext,
+                options: options)
+            guard !Task.isCancelled,
+                  self.externalPrepareCardID == card.id,
+                  self.stack.last?.card.id == card.id else { return }
+
+            // 深度上下文：原始上下文超预算时，用当前模型压缩周边资料；
+            // 选区所在段落仍保留原文。摘要失败就用本地截取，不阻塞解释。
+            if deepContext, let raw = resolved.context,
+               DeepContextComposer.shouldSummarize(raw) {
+                self.answerView.updateThinkingPlaceholder("正在压缩长上下文…")
+                let local = SelectionTextExcerpt.excerpt(from: raw,
+                                                         selection: normalized.selection,
+                                                         limit: 700)
+                let llmSummary = await ContextCompressor.shared.summarize(
+                    context: raw,
+                    selection: normalized.selection)
+                // 模型没配置/失败时用本地抽取式摘要兜底，深度上下文仍然可用
+                let summary = llmSummary
+                    ?? DeepContextComposer.extractiveSummary(context: raw,
+                                                              selection: normalized.selection)
+                guard !Task.isCancelled,
+                      self.externalPrepareCardID == card.id,
+                      self.stack.last?.card.id == card.id else { return }
+                resolved.context = DeepContextComposer.compose(localExcerpt: local,
+                                                               summary: summary,
+                                                               fallback: raw,
+                                                               limit: 1_500)
+            }
+
+            self.externalPrepareTask = nil
+            self.externalPrepareCardID = nil
+            self.externalPrepareEnvelope = nil
+
+            if var node = self.stack.last {
+                node.card.source = resolved.source
+                node.card.contextSnapshot = resolved.context
+                self.stack[self.stack.count - 1] = node
+            }
+            self.persistCurrentCard()
+            self.renderCurrent(placeholder: true)
+            self.answerView.updateThinkingPlaceholder("正在生成解释…")
+            self.startExternalStreaming(envelope: normalized,
+                                        resolved: resolved,
+                                        cardID: card.id)
+        }
+    }
+
+    /// 取消「解析来源上下文」：删掉刚建的空卡，避免知识树里出现空节点。
+    private func cancelExternalPreparation(deleteCard: Bool) {
+        guard externalPrepareTask != nil || externalPrepareCardID != nil else { return }
+        externalPrepareTask?.cancel()
+        externalPrepareTask = nil
+        externalPrepareEnvelope = nil
+        guard let cardID = externalPrepareCardID else { return }
+        externalPrepareCardID = nil
+        guard deleteCard else { return }
+
+        stack.removeAll { $0.card.id == cardID }
+        // 只删空卡 + 刷树；界面重绘由调用方（新选区/切卡/重置）负责，
+        // 避免迟到的删除任务把刚建好的新卡又清掉。
+        Task { @MainActor [weak self] in
+            await CardStore.shared.delete(id: cardID)
+            self?.refreshTreeIfVisible()
+        }
+    }
+
+    /// 菜单栏「解释剪贴板内容」：零权限入口，也作为 AX 不可用时的兜底。
+    func explainClipboard() {
+        let raw = NSPasteboard.general.string(forType: .string) ?? ""
+        let parsed = SelectionEnvelope.normalizeSelection(raw, limit: Settings.externalSelectionMaxLength)
+        guard !parsed.text.isEmpty else {
+            showNoticeBar(title: "剪贴板里没有文字",
+                          detail: "先复制一段要解释的文字，再点一次「解释剪贴板内容」。",
+                          options: [("dismiss", "知道了")])
+            return
+        }
+        let envelope = SelectionEnvelope(source: SelectionSource(kind: .clipboard),
+                                         selection: parsed.text,
+                                         selectionTruncated: parsed.truncated ? true : nil)
+        handleExternalSelection(envelope)
+    }
+
+    /// 热键入口（P1）：读取前台 App 的选区，建一张带来源的外部卡。
+    ///
+    /// 必须在显示面板之前拿到前台 pid——面板一旦显示，前台就可能变成 Sprig。
+    func explainSelectionFromFrontmostApp() {
+        guard Settings.externalSelectionEnabled else { return }
+        guard SelectionCapture.isTrusted else {
+            accessibilityLevelTask?.cancel()
+            accessibilityLevelTask = nil
+            Settings.hasRequestedAccessibility = true
+            if !SelectionCapture.hasRequestedThisLaunch {
+                // 系统授权弹窗是独立窗口；先把 Sprig 面板降到普通层级，
+                // 否则 floating 面板会盖住弹窗，用户点不到「打开系统设置」。
+                _ = SelectionCapture.requestAccessOncePerLaunch()
+                NSLog("[Sprig] hotkey: accessibility not trusted, prompt shown below panel")
+                showAccessibilityGuide(belowSystemPrompt: true)
+                restorePanelLevelAfterSystemPrompt()
+            } else {
+                NSLog("[Sprig] hotkey: accessibility not trusted, showing guide")
+                showAccessibilityGuide()
+            }
+            return
+        }
+
+        NSLog("[Sprig] hotkey: capturing frontmost selection")
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            guard let captured = await SelectionCapture.captureFrontmost(
+                maxLength: Settings.externalSelectionMaxLength,
+                allowClipboardFallback: true) else {
+                NSLog("[Sprig] hotkey: capture returned nil")
+                self.showCaptureFailureGuide()
+                return
+            }
+            NSLog("[Sprig] hotkey: captured kind=%@ title=%@ length=%d",
+                  captured.source.kind.rawValue,
+                  captured.source.title ?? "nil",
+                  captured.selection.count)
+            let envelope = SelectionEnvelope(source: captured.source,
+                                             selection: captured.selection)
+            // AX 周边文字作为兜底上下文：网页/文件解析优先，拿不到再用它
+            self.handleExternalSelection(envelope, fallbackContext: captured.surroundingText)
+        }
+    }
+
+    private func showAccessibilityGuide(belowSystemPrompt: Bool = false) {
+        showNoticeBar(
+            title: "读取选区需要辅助功能权限",
+            detail: "知枝只在按 ⌥⇧Space 时读一次当前 App 的选区；不后台监听、不读剪贴板。"
+                + "如果之前授权过，adhoc 版本重建后需要重新勾选一次。",
+            options: [("open-settings", "打开系统设置"),
+                      ("clipboard", "用剪贴板解释"),
+                      ("dismiss", "知道了")],
+            belowSystemPrompt: belowSystemPrompt)
+    }
+
+    /// 系统授权弹窗期间把面板降到普通层级；授权成功或超时后恢复浮动层级。
+    private func restorePanelLevelAfterSystemPrompt() {
+        accessibilityLevelTask?.cancel()
+        accessibilityLevelTask = Task { @MainActor [weak self] in
+            for _ in 0..<60 {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                if Task.isCancelled { return }
+                if SelectionCapture.isTrusted { break }
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.panel.level = .floating
+            guard self.isVisible else { return }
+            self.panel.orderFrontRegardless()
+            if SelectionCapture.isTrusted {
+                self.showNoticeBar(
+                    title: "辅助功能已授权",
+                    detail: "再按一次 ⌥⇧Space 就能解释选区了（如果还不行，先把焦点放回目标 App）。",
+                    options: [("dismiss", "知道了")])
+            }
+        }
+    }
+
+    private func showCaptureFailureGuide() {
+        showNoticeBar(
+            title: "没有读到选区",
+            detail: "可能当前 App 不暴露选中文字，或焦点已经回到知枝。把焦点放到要解释的 App、选中文字后再按一次 ⌥⇧Space。",
+            options: [("retry", "重试"),
+                      ("clipboard", "用剪贴板解释"),
+                      ("dismiss", "知道了")])
+    }
+
+    /// 面板底部的轻提示条（不是 agent 权限，不需要落卡片）。
+    private func showNoticeBar(title: String,
+                               detail: String,
+                               options: [(String, String)],
+                               belowSystemPrompt: Bool = false) {
+        if belowSystemPrompt {
+            showBelowSystemPrompt()
+        } else {
+            show()
+        }
+        content.permissionBar.onPick = { [weak self] optionID in
+            self?.content.hidePermission()
+            self?.handleNoticeOption(optionID)
+        }
+        content.showPermission(title: title, detail: detail, options: options)
+    }
+
+    /// 显示面板但不激活 App、不用 floating 层级：给系统授权弹窗让位。
+    private func showBelowSystemPrompt() {
+        if !isVisible {
+            isVisible = true
+            content.refreshSearchToggle()
+            reposition()
+            bringToActiveSpace()
+            panel.alphaValue = 1
+        }
+        panel.level = .normal
+        panel.orderFrontRegardless()
+        panel.orderBack(nil)
+    }
+
+    private func handleNoticeOption(_ optionID: String) {
+        switch optionID {
+        case "open-settings":
+            _ = SelectionCapture.requestAccessOncePerLaunch()
+            SelectionCapture.openAccessibilitySettings()
+        case "clipboard":
+            explainClipboard()
+        case "retry":
+            explainSelectionFromFrontmostApp()
+        default:
+            break
+        }
+    }
+
+    /// 外部选区卡片的流式启动：装配上下文、复用现有 provider/agent 管线。
+    private func startExternalStreaming(envelope: SelectionEnvelope,
+                                        resolved: ResolvedSourceContext,
+                                        cardID: UUID) {
+        let activeConfig = Settings.activeConfig
+        let policy = SelectionContextAssembler.Policy.dynamic(
+            isLocal: activeConfig.kind.isLocal,
+            contextTokens: contextBudgetTokens,
+            toolReserve: Settings.webSearchReady ? 3_000 : 0,
+            selectionCap: Settings.externalSelectionMaxLength,
+            deepContext: Settings.deepContextEnabled)
+        // 用解析后的来源（可能补出了 filePath/标题/headingPath），而不是入口时的原始 source
+        var effective = envelope
+        effective.source = resolved.source
+        let message = Prompt.selectionMessage(envelope: effective,
+                                              context: resolved.context,
+                                              policy: policy)
+        DebugTrace.log("startExternalStreaming card=\(cardID) msgLen=\(message.count) usesAgent=\(Settings.usesAgent) acpReady=\(Settings.acpReady) host=\(Settings.useAcpHost)")
+        startStreaming(messages: [ChatMessage.system(Prompt.selectionContextual), .user(message)],
+                       owner: cardID)
+    }
+
+    // MARK: - 打开来源
+
+    private func openCurrentSource() {
+        guard let card = stack.last?.card else { return }
+        openSource(for: card)
+    }
+
+    private func openSource(for card: AnswerCard) {
+        guard let source = card.source else { return }
+
+        if let raw = source.url, let url = URL(string: raw),
+           let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
+            let target = textFragmentURL(url, selection: card.selectedText) ?? url
+            NSWorkspace.shared.open(target)
+            return
+        }
+        if let path = source.filePath {
+            if let vault = source.vaultName, !vault.isEmpty,
+               let url = obsidianURL(vault: vault, filePath: path) {
+                NSWorkspace.shared.open(url)
+                return
+            }
+            NSWorkspace.shared.open(URL(fileURLWithPath: path))
+            return
+        }
+        NSSound.beep()
+    }
+
+    /// 网页回跳：用 Text Fragment 定位到选中的文字（浏览器不支持时退回页首）
+    private func textFragmentURL(_ url: URL, selection: String?) -> URL? {
+        guard let selection, !selection.isEmpty,
+              var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+        components.fragment = ":~:text=" + selection
+        return components.url
+    }
+
+    /// Obsidian 深链：`obsidian://open?vault=<名称>&file=<库内相对路径>`
+    private func obsidianURL(vault: String, filePath: String) -> URL? {
+        var file = URL(fileURLWithPath: filePath).deletingPathExtension().lastPathComponent
+        if let root = Settings.obsidianVaults.first(where: { $0.name == vault })?.path {
+            let prefix = root.hasSuffix("/") ? root : root + "/"
+            if filePath.hasPrefix(prefix) {
+                file = String(filePath.dropFirst(prefix.count))
+                if file.lowercased().hasSuffix(".md") { file = String(file.dropLast(3)) }
+            }
+        }
+        var components = URLComponents()
+        components.scheme = "obsidian"
+        components.host = "open"
+        components.queryItems = [URLQueryItem(name: "vault", value: vault),
+                                 URLQueryItem(name: "file", value: file)]
+        return components.url
+    }
+
     // MARK: - 流式
 
     /// 错误文案 + 末尾的「重试」链接：首次失败和切卡回来重渲染共用
@@ -974,15 +1343,24 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
             stack[index].errorText = nil
         }
         if Settings.usesAgent {
+            DebugTrace.log("startStreaming -> agent owner=\(owner)")
             startAgentStreaming(messages: messages, owner: owner)
             return
         }
         // 没填 key 就不发请求了，否则用户只能看到一条 401，比直接说清楚难懂得多
         let config = Settings.activeConfig
         guard config.isConfigured else {
-            let message = "\n\n⚠️ 「\(config.displayName)」还没配好："
-                + (config.kind.needsAPIKey ? "缺 API Key。" : "模型名是空的。")
-                + "\n点右上角的模型按钮切一个能用的，或进「设置…」补上后重试。"
+            let reason = config.kind.needsAPIKey ? "缺 API Key。" : "模型名是空的。"
+            let message: String
+            if stack.last?.card.source != nil {
+                // 外部选区卡：卡片和来源已经建好，别让用户以为功能坏了
+                message = "\n\n⚠️ 卡片和来源已经建好，但当前接入「\(config.displayName)」还没配好：\(reason)"
+                    + "\n点右上角的模型胶囊切一个能用的，或进「设置…」补上；"
+                    + "也可以切到 Agent（如 WorkBuddy）后点下方「↻ 重试本次对话」。"
+            } else {
+                message = "\n\n⚠️ 「\(config.displayName)」还没配好：\(reason)"
+                    + "\n点右上角的模型按钮切一个能用的，或进「设置…」补上后重试。"
+            }
             showLocalError(message)
             return
         }
@@ -1120,13 +1498,16 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         pendingSegments.removeAll()
         seenTerms.removeAll()
 
+        // 知枝是解释器，不是编码 agent：强约束不要进入工具/工作区流程
+        let qaText = text + AcpCodec.termHint + AcpCodec.qaHint
+
         // 走守护进程：登录、模型、各家脾气都交给 acp-host，这里只收文本
         if Settings.useAcpHost {
-            startAcpHostStreaming(text: text, owner: owner)
+            DebugTrace.log("startAgentStreaming -> host textLen=\(qaText.count)")
+            startAcpHostStreaming(text: qaText, owner: owner)
             return
         }
 
-        let prompt = text + AcpCodec.termHint
         let command = Settings.acpCommand
         let cwd = Settings.acpWorkspacePath
         let path = AcpEnvironment.searchPath()
@@ -1135,12 +1516,14 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         streamingOwner = owner
         streamTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            let stream = await AcpClient.shared.ask(text: prompt,
+            DebugTrace.log("direct ask begin owner=\(ownerID) command=\(command.prefix(80))")
+            let stream = await AcpClient.shared.ask(text: qaText,
                                                     commandLine: command,
                                                     cwd: cwd,
                                                     path: path,
                                                     model: modelID,
                                                     thoughtLevel: Settings.activeAgent?.thoughtLevel,
+                                                    suppressToolActivity: true,
                                                     permission: { ask in
                 await PanelController.shared.requestPermission(ask)
             }, onAuthURL: { url in
@@ -1148,14 +1531,18 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
                     NSWorkspace.shared.open(url)
                 }
             })
+            DebugTrace.log("direct ask returned owner=\(ownerID)")
             do {
                 for try await chunk in stream {
+                    DebugTrace.log("direct chunk \(chunk.count) owner=\(ownerID)")
                     if Task.isCancelled { return }
                     self.consume(chunk, owner: ownerID)
                 }
+                DebugTrace.log("direct stream end owner=\(ownerID)")
                 if Task.isCancelled { return }
                 self.finish(owner: ownerID)
             } catch {
+                DebugTrace.log("direct error owner=\(ownerID) \(error.localizedDescription)")
                 if Task.isCancelled { return }
                 self.fail(owner: ownerID, error: error)
             }
@@ -1171,6 +1558,7 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
 
         streamTask = Task { @MainActor [weak self] in
             guard let self else { return }
+            DebugTrace.log("host ask begin owner=\(ownerID) agent=\(agent)")
             let stream = await AcpHostClient.shared.ask(
                 text: text, agent: agent, cwd: cwd,
                 binaryPath: Settings.acpHostPath.isEmpty ? nil : Settings.acpHostPath,
@@ -1270,25 +1658,28 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         showError(message)
     }
 
+    /// 没有卡片可挂的轻提示（如剪贴板为空）：只占答案区，不写知识库、不出重试链接。
+    private func showExternalNotice(_ message: String) {
+        isStreaming = false
+        answerView.clearThinkingPlaceholder()
+        answerView.reset()
+        answerView.renderRich(message)
+        answerHeight = measuredAnswerHeight()
+        questionHeight = 0
+        content.questionHeader.configure(text: "", source: nil)
+        applyHeights(animated: true)
+        answerView.scrollToBottom()
+    }
+
     /// Agent 的 `session/request_permission`。选项原样摆出来，知枝不预先允许或拒绝。
     func requestPermission(_ ask: AcpPermissionAsk) async -> AcpPermissionOutcome {
-        let id = UUID()
-        return await withTaskCancellationHandler {
-            await withCheckedContinuation { continuation in
-                if Task.isCancelled {
-                    continuation.resume(returning: .cancelled)
-                    return
-                }
-                permissionQueue.append(PermissionWait(id: id, ask: ask) { outcome in
-                    continuation.resume(returning: outcome)
-                })
-                pumpPermission()
-            }
-        } onCancel: {
-            Task { @MainActor in
-                PanelController.shared.cancelPermission(id)
-            }
+        // 知枝只做解释/问答，不执行 agent 的工具；直接拒绝，避免一串「需要许可」弹窗。
+        let reject = ask.options.first { option in
+            let lower = (option.kind + " " + option.name).lowercased()
+            return lower.contains("reject") || lower.contains("deny") || lower.contains("cancel")
         }
+        DebugTrace.log("auto-deny permission: \(ask.title) option=\(reject?.id ?? "cancelled")")
+        return reject.map { .selected($0.id) } ?? .cancelled
     }
 
     private func pumpPermission() {
@@ -1889,7 +2280,7 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
             answerHeight = 0
             questionHeight = 0
             bottomHeight = 0
-            content.questionHeader.configure(text: "")
+            content.questionHeader.configure(text: "", source: nil)
             applyHeights(animated: false)
             updateBreadcrumb()
             return
@@ -1915,13 +2306,16 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         }
 
         let questionText = displayQuestion(for: node.card)
-        content.questionHeader.configure(text: questionText)
-        questionHeight = measuredQuestionHeight(questionText)
+        content.questionHeader.configure(text: questionText,
+                                         source: node.card.source,
+                                         context: node.card.contextSnapshot)
+        questionHeight = measuredQuestionHeight(questionText, source: node.card.source)
         bottomHeight = max(bottomHeight, measuredBottomHeight())
 
         applyHeights(animated: false)
         updateBreadcrumb()
         restoreScroll(node.scroll)
+        prepareMathIfNeeded(for: node.card)
     }
 
     private func displayQuestion(for card: AnswerCard) -> String {
@@ -1936,6 +2330,7 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
 
     private func go(to index: Int) {
         guard index >= 0, index < stack.count - 1 else { return }
+        cancelExternalPreparation(deleteCard: true)
         detachCurrentStreaming()
         stack[stack.count - 1].scroll = currentScroll()
         stack.removeSubrange((index + 1)...)
@@ -1970,6 +2365,7 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         Task { await CardStore.shared.upsert(card) }
         prepareHtmlAssets(for: card)
         prepareMermaidIfNeeded(for: card)
+        prepareMathIfNeeded(for: card)
         refreshTreeIfVisible()
     }
 
@@ -1995,6 +2391,48 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
             guard changed, self.stack.last?.card.id == card.id else { return }
             self.renderCurrent()
         }
+    }
+
+    /// 这张卡里的数学公式还没画出来时就后台画，画完重绘。
+    /// 和 mermaid 一样：同一张卡同时只跑一个任务。
+    private func prepareMathIfNeeded(for card: AnswerCard) {
+        guard !mathJobs.contains(card.id) else { return }
+        let sources = Self.mathSources(in: card.answer)
+        guard !sources.isEmpty,
+              sources.contains(where: { MathSnapshot.cached($0.latex, display: $0.display) == nil }) else { return }
+
+        mathJobs.insert(card.id)
+        Task { @MainActor [weak self] in
+            var changed = false
+            for source in sources where MathSnapshot.cached(source.latex, display: source.display) == nil {
+                if await MathSnapshot.image(for: source.latex, display: source.display) != nil {
+                    changed = true
+                }
+            }
+            guard let self else { return }
+            self.mathJobs.remove(card.id)
+            guard changed, self.stack.last?.card.id == card.id else { return }
+            self.renderCurrent()
+        }
+    }
+
+    /// 收集答案里所有数学公式（块级 + 行内），按出现顺序去重
+    private static func mathSources(in raw: String) -> [(latex: String, display: Bool)] {
+        var result: [(String, Bool)] = []
+        var seen = Set<String>()
+        for block in MarkdownLite.parse(raw) {
+            if case .math(let latex) = block.kind,
+               seen.insert("block|" + latex).inserted {
+                result.append((latex, true))
+            }
+            for inline in block.inlines {
+                if case .mathInline(let latex) = inline,
+                   seen.insert("inline|" + latex).inserted {
+                    result.append((latex, false))
+                }
+            }
+        }
+        return result
     }
 
     /// 答案里有 ```html 图块时，把它离屏渲染成 PNG 落到 `<知识库>/assets/`，
@@ -2097,6 +2535,7 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
     }
 
     private func resetToEmpty() {
+        cancelExternalPreparation(deleteCard: true)
         cancelStreaming()
         stack = []
         answerView.reset()
@@ -2106,7 +2545,7 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         pendingParentID = nil
         pendingParentSelection = nil
         pendingDelete = nil
-        content.questionHeader.configure(text: "")
+        content.questionHeader.configure(text: "", source: nil)
         applyHeights(animated: true)
         updateBreadcrumb()
     }
@@ -2297,6 +2736,38 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         }
     }
 
+    /// 调试：造一张带块级 + 行内公式的卡，等公式渲染完拍一张面板图（--math-panel-demo）。
+    func debugMathDemo(snapshotPath: String?) async {
+        let answer = """
+        召回率定义：
+
+        $$
+        \\text{召回率} = \\frac{\\text{检索到的相关片段数}}{\\text{语料中全部相关片段数}}
+        $$
+
+        行内公式 $R = \\frac{a}{b}$ 和变量 $x$ 也要能正常排版。
+
+        $$E = mc^2$$
+        """
+        show()
+        let card = AnswerCard(title: "公式测试", question: "测试公式渲染", answer: answer)
+        stack = [Node(card: card, raw: answer, scroll: 0)]
+        renderCurrent()
+        for _ in 0..<30 {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            let pending = Self.mathSources(in: answer).contains {
+                MathSnapshot.cached($0.latex, display: $0.display) == nil
+            }
+            if !pending { break }
+        }
+        renderCurrent()
+        content.layoutSubtreeIfNeeded()
+        if let snapshotPath, let view = panel.contentView {
+            writePNG(view, to: URL(fileURLWithPath: snapshotPath))
+            print("[math] snapshot ->", snapshotPath)
+        }
+    }
+
     func debugSelfTest() {
         defer { dumpSnapshotIfRequested() }
         show()
@@ -2318,6 +2789,25 @@ final class PanelController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         print("panel.frame        =", panel.frame)
         print("breadcrumb.frame   =", content.breadcrumb.frame)
         print("questionHeader     =", content.questionHeader.frame, "| text:", content.questionHeader.debugText)
+
+        // 外部选区来源行：文字、frame、高度都要能量出来
+        let demoSource = SelectionSource(kind: .web,
+                                         appName: "Safari",
+                                         title: "RAG 是什么",
+                                         url: "https://example.com/rag")
+        content.questionHeader.configure(
+            text: "关于「幻觉」",
+            source: demoSource,
+            context: "RAG 会缓解模型的幻觉问题，但无法彻底消除。")
+        let sourceHeight = measuredQuestionHeight("关于「幻觉」", source: demoSource)
+        questionHeight = sourceHeight
+        applyHeights(animated: false)
+        content.layoutSubtreeIfNeeded()
+        print("sourceHeader.text  =", content.questionHeader.debugSourceText)
+        print("sourceHeader.frame =", content.questionHeader.frame)
+        print("sourceHeader.height=", sourceHeight)
+        print("sourceHeader.context=", content.questionHeader.debugContextTools)
+
         print("bottomScroll.frame =", content.bottomScroll.frame)
         print("answerScroll.frame =", content.answerScroll.frame)
         print("inputScroll.frame  =", content.inputScroll.frame)

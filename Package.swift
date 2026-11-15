@@ -17,7 +17,11 @@ let package = Package(
             name: "Sprig",
             dependencies: ["SprigCore", "KeyboardShortcuts"]
         ),
-        .testTarget(name: "SprigCoreTests", dependencies: ["SprigCore"]),
+        .testTarget(
+            name: "SprigCoreTests",
+            dependencies: ["SprigCore"],
+            resources: [.copy("Fixtures")]
+        ),
     ],
     swiftLanguageModes: [.v5]
 )

@@ -664,4 +664,94 @@ enum Settings {
         guard agentWorkspace.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         try? FileManager.default.createDirectory(atPath: defaultAgentWorkspace, withIntermediateDirectories: true)
     }
+
+    // MARK: - 跨应用划词（P0/P1）
+
+    private static let externalSelectionEnabledKey = "externalSelectionEnabled"
+    private static let externalSelectionMaxLengthKey = "externalSelectionMaxLength"
+    private static let fetchWebContextKey = "fetchWebContext"
+    private static let deepContextEnabledKey = "deepContextEnabled"
+    private static let hasRequestedAccessibilityKey = "hasRequestedAccessibility"
+    private static let documentFoldersKey = "externalDocumentFolders"
+    private static let obsidianVaultsKey = "obsidianVaults"
+
+    /// 外部选区入口总开关。默认开：只在用户明确按热键/点菜单/走服务时才会读选区。
+    static var externalSelectionEnabled: Bool {
+        get {
+            guard UserDefaults.standard.object(forKey: externalSelectionEnabledKey) != nil else { return true }
+            return UserDefaults.standard.bool(forKey: externalSelectionEnabledKey)
+        }
+        set { UserDefaults.standard.set(newValue, forKey: externalSelectionEnabledKey) }
+    }
+
+    /// 选区字符上限。默认 500，可配 100–2000；URL scheme 入口另有 500 的硬上限。
+    static var externalSelectionMaxLength: Int {
+        get {
+            let value = UserDefaults.standard.integer(forKey: externalSelectionMaxLengthKey)
+            guard value > 0 else { return 500 }
+            return min(max(value, 100), SelectionEnvelope.absoluteMaxSelectionLength)
+        }
+        set {
+            UserDefaults.standard.set(min(max(newValue, 100), SelectionEnvelope.absoluteMaxSelectionLength),
+                                      forKey: externalSelectionMaxLengthKey)
+        }
+    }
+
+    /// 解释时是否抓网页上下文。默认开；只抓公网 http(s)，内网地址拒绝。
+    static var fetchWebContext: Bool {
+        get {
+            guard UserDefaults.standard.object(forKey: fetchWebContextKey) != nil else { return true }
+            return UserDefaults.standard.bool(forKey: fetchWebContextKey)
+        }
+        set { UserDefaults.standard.set(newValue, forKey: fetchWebContextKey) }
+    }
+
+    /// 深度上下文：上下文超预算时调用模型压缩周边资料（会产生一次额外模型调用）。
+    static var deepContextEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: deepContextEnabledKey) }
+        set { UserDefaults.standard.set(newValue, forKey: deepContextEnabledKey) }
+    }
+
+    /// 是否已经主动弹过辅助功能授权提示（避免每次失败都弹系统框）。
+    static var hasRequestedAccessibility: Bool {
+        get { UserDefaults.standard.bool(forKey: hasRequestedAccessibilityKey) }
+        set { UserDefaults.standard.set(newValue, forKey: hasRequestedAccessibilityKey) }
+    }
+
+    /// 解释外部选区时用于反查本地文件的目录（手动配置，不自动扫 ~/Documents）。
+    static var documentFolders: [String] {
+        get {
+            guard let data = UserDefaults.standard.data(forKey: documentFoldersKey),
+                  let decoded = try? JSONDecoder().decode([String].self, from: data) else { return [] }
+            return decoded
+        }
+        set {
+            let cleaned = newValue.filter { !$0.isEmpty }
+            guard let data = try? JSONEncoder().encode(cleaned) else { return }
+            UserDefaults.standard.set(data, forKey: documentFoldersKey)
+        }
+    }
+
+    /// Obsidian 库（名称 + 根目录）。窗口标题里的「笔记名 - 库名」用它反查文件。
+    static var obsidianVaults: [ObsidianVault] {
+        get {
+            guard let data = UserDefaults.standard.data(forKey: obsidianVaultsKey),
+                  let decoded = try? JSONDecoder().decode([ObsidianVault].self, from: data) else { return [] }
+            return decoded
+        }
+        set {
+            let cleaned = newValue.filter { !$0.name.isEmpty && !$0.path.isEmpty }
+            guard let data = try? JSONEncoder().encode(cleaned) else { return }
+            UserDefaults.standard.set(data, forKey: obsidianVaultsKey)
+        }
+    }
+
+    /// 来源上下文解析配置。所有 UI 入口都从这里取，避免设置分散。
+    static var sourceResolverOptions: SourceResolverOptions {
+        SourceResolverOptions(fetchWebContext: fetchWebContext,
+                              documentFolders: documentFolders,
+                              obsidianVaults: obsidianVaults,
+                              contextLimit: 1_200,
+                              webTimeout: 8)
+    }
 }

@@ -132,9 +132,32 @@ Each has light and dark palettes that follow the system appearance. Themes chang
 
 Settings → Reading theme.
 
+## Cross-app selection
+
+Besides selecting text inside the panel, Sprig can turn text selected in other apps into a source-aware explanation card:
+
+| Entry | How | Permission |
+|---|---|---|
+| Hotkey | select text → `⌥⇧Space` | Accessibility (reads selection once) |
+| Menu bar | Explain current selection / Explain clipboard | Accessibility for selection; clipboard needs none |
+| Services | select text → right-click → Services → Explain with Sprig | none |
+| URL scheme | `open "sprig://explain?text=…&url=…"` | none |
+
+Context sources: public web pages, local Markdown / Obsidian / PDF / Office documents, and DSH conversations (via plugin). Open the ⓘ next to the source line to preview the exact context and estimated tokens.
+
+Document folders and Obsidian vaults are **optional**: Sprig explains selections without them. They are only used to reverse-look-up a local document by window title when the source app does not expose a file path. Web pages, the DSH plugin, explicit URL `path`, and AXDocument file URLs do not depend on them.
+
+**Deep context** (Settings → Web search area) is off by default. When the raw context exceeds ~1200 tokens, Sprig asks the active model to summarize the surrounding material (the selection itself stays verbatim), caches the summary, and falls back to a local extractive summary when no model is configured.
+
+### DSH plugin
+
+`dsh-plugins/sprig/` is a DSH client plugin: selecting text replaces DSH's quote action bar with **Copy / Quote / Explain with Sprig**. Only real user/assistant messages are sent (system reminders and skill catalogs are filtered, ≤1800 chars), via the local bridge at `127.0.0.1:53917`. Install it from DSH **Plugins → Add plugin** (select the directory), start Sprig, then refresh DSH. It works in the DSH Web UI only and reuses DSH's internal quote surface, so a future DSH UI change may need adaptation.
+
 ## Connecting a local agent
 
-**If you already have Claude Code, Cursor, CodeBuddy, or Gemini CLI installed, this is the least effort**: Sprig hands the question to the agent, the agent reads files and runs tools on its own, and Sprig just displays the result.
+**If you already have Claude Code, Cursor, CodeBuddy, or Gemini CLI installed, this is the least effort**: Sprig hands the question and available context to the agent and displays the answer.
+
+> Sprig's agent mode is a **Q&A mode**, not a coding workbench: the prompt tells the agent not to call tools or touch the workspace, tool permission requests are auto-denied, and tool activity is hidden. Use the agent client itself for coding tasks.
 
 **Settings → Agent** auto-detects what's installed:
 
@@ -150,11 +173,11 @@ Settings → Reading theme.
 
 **Switching**: model capsule at the bottom of the panel → "Agent" group. While an agent is selected the web-search toggle is greyed out — whether to search is up to the agent.
 
-**While waiting**, the agent's reasoning fragments and tool calls (e.g. `Bash: ls`) appear in the status line, yielding to the answer once the first token arrives.
+**While waiting**, the agent's reasoning fragments appear in the status line, yielding to the answer once the first token arrives. Tool calls are neither shown nor permitted in Q&A mode.
 
 **If not logged in**: the panel shows a login link; open it in your browser, and the agent retries automatically afterwards.
 
-**Permissions**: when the agent needs to run a command it asks for approval (the title reads like `Bash: ls`). Choosing "Always Allow" sticks.
+**Permissions**: Sprig does not execute agent tools, so tool permission requests are auto-denied instead of showing approval prompts. Use the agent's own client when you need command execution.
 
 ## Connecting a cloud model
 
@@ -335,7 +358,11 @@ Sprig --settings --dump           # dump settings form state
 Sprig --headless "question"       # run provider + parser only
 Sprig --test-agents               # handshake with every configured agent
 Sprig --acp-host-info             # show bundled acp-host path and version
+Sprig --acp-host-probe "question" # verify acp-host path without UI
+Sprig --direct-acp-probe "question" # verify direct ACP path without UI
 Sprig --readme-shots /tmp/shots   # generate README screenshots from a temp library
+tail -f /tmp/sprig-bridge.log     # DSH plugin requests reaching Sprig
+tail -f /tmp/sprig-trace.log      # ACP streaming stages (stuck card diagnostics)
 SPRIG_ACP_TRACE=/tmp/acp.log Sprig --ask "hello"   # log raw ACP frames
 ```
 

@@ -12,11 +12,14 @@ public enum ContextAssembler {
         public let title: String
         public let question: String
         public let answer: String
+        /// 外部选词卡片的来源上下文快照。普通卡片为 nil。
+        public let sourceSnapshot: String?
 
-        public init(title: String, question: String, answer: String) {
+        public init(title: String, question: String, answer: String, sourceSnapshot: String? = nil) {
             self.title = title
             self.question = question
             self.answer = answer
+            self.sourceSnapshot = sourceSnapshot
         }
     }
 
@@ -93,6 +96,19 @@ public enum ContextAssembler {
         var remaining = policy.totalBudget - currentAnswer.count - policy.toolReserve
         var ancestorLines: [String] = []
         var depth = 0
+
+        // 最近一个外部选词卡的来源上下文（追问子卡时带上，让追问仍按来源语境回答）。
+        // 只取一次，且最多 800 字——更远的来源快照对当前问题帮助递减。
+        if remaining > 200,
+           let snapshot = path.reversed().compactMap(\.sourceSnapshot)
+            .first(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+            let limit = min(800, max(200, remaining - 120))
+            let summary = truncate(snapshot, limit: limit)
+            if !summary.isEmpty {
+                sections.append("【来源上下文】\n\(summary)")
+                remaining -= summary.count + 12
+            }
+        }
 
         for node in path.dropLast().reversed() {
             guard depth < policy.maxAncestors, remaining > 60 else { break }

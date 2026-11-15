@@ -7,6 +7,8 @@ public enum MarkdownInline: Equatable, Sendable {
     case italic(String)
     case code(String)
     case term(String)
+    /// 行内数学公式 `$...$` / `\(...\)`，UI 层渲染成小图
+    case mathInline(String)
 }
 
 public enum MarkdownBlockKind: Equatable, Sendable {
@@ -26,6 +28,8 @@ public enum MarkdownBlockKind: Equatable, Sendable {
     case html(String)
     /// ```mermaid 块：UI 层渲染成图片，渲染不了就退回带高亮的源码
     case mermaid(String)
+    /// $$...$$ / \[...\] 数学公式块：UI 层用 KaTeX 渲染成图片
+    case math(String)
 }
 
 /// 图表数据。模型用 ```sprig-chart 加一段 JSON 描述，知枝负责画。
@@ -81,7 +85,7 @@ public struct MarkdownBlock: Equatable, Sendable {
         inlines.map { inline in
             switch inline {
             case .text(let value), .bold(let value), .italic(let value),
-                 .code(let value), .term(let value):
+                 .code(let value), .term(let value), .mathInline(let value):
                 return value
             }
         }.joined()
@@ -118,6 +122,8 @@ public enum MarkdownLite {
                 blocks.append(MarkdownBlock(kind: .mermaid(body), inlines: []))
             } else if codeLanguage.lowercased() == "html" {
                 blocks.append(MarkdownBlock(kind: .html(body), inlines: []))
+            } else if ["math", "latex", "tex"].contains(codeLanguage.lowercased()) {
+                blocks.append(MarkdownBlock(kind: .math(body), inlines: []))
             } else {
                 blocks.append(MarkdownBlock(kind: .code(codeLanguage), inlines: [.text(body)]))
             }
@@ -145,6 +151,58 @@ public enum MarkdownLite {
             }
             if inCode {
                 codeLines.append(line)
+                continue
+            }
+
+            // $$ ... $$ 数学公式块（支持单行和多行）
+            if trimmed.hasPrefix("$$") {
+                flushParagraph()
+                let rest = String(trimmed.dropFirst(2))
+                if let close = rest.range(of: "$$") {
+                    let latex = String(rest[..<close.lowerBound]).trimmingCharacters(in: .whitespaces)
+                    if !latex.isEmpty { blocks.append(MarkdownBlock(kind: .math(latex), inlines: [])) }
+                    continue
+                }
+                var cursor = lineIndex + 1
+                var body: [String] = rest.isEmpty ? [] : [rest]
+                while cursor < lines.count {
+                    let current = lines[cursor]
+                    if let close = current.range(of: "$$") {
+                        body.append(String(current[..<close.lowerBound]))
+                        break
+                    }
+                    body.append(current)
+                    cursor += 1
+                }
+                lineIndex = min(cursor, lines.count - 1)
+                let latex = body.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+                if !latex.isEmpty { blocks.append(MarkdownBlock(kind: .math(latex), inlines: [])) }
+                continue
+            }
+
+            // \[ ... \] 数学公式块
+            if trimmed.hasPrefix("\\[") {
+                flushParagraph()
+                let rest = String(trimmed.dropFirst(2))
+                if let close = rest.range(of: "\\]") {
+                    let latex = String(rest[..<close.lowerBound]).trimmingCharacters(in: .whitespaces)
+                    if !latex.isEmpty { blocks.append(MarkdownBlock(kind: .math(latex), inlines: [])) }
+                    continue
+                }
+                var cursor = lineIndex + 1
+                var body: [String] = rest.isEmpty ? [] : [rest]
+                while cursor < lines.count {
+                    let current = lines[cursor]
+                    if let close = current.range(of: "\\]") {
+                        body.append(String(current[..<close.lowerBound]))
+                        break
+                    }
+                    body.append(current)
+                    cursor += 1
+                }
+                lineIndex = min(cursor, lines.count - 1)
+                let latex = body.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+                if !latex.isEmpty { blocks.append(MarkdownBlock(kind: .math(latex), inlines: [])) }
                 continue
             }
 
@@ -256,6 +314,21 @@ public enum MarkdownLite {
         return (digits + ".", text)
     }
 
+    /// 判断 `$...$` 里是不是真的数学公式，避免把价格 `$5`、普通 `$文本$` 误判。
+    /// 规则：有 TeX 常见字符就直接算；很短且只含字母/数字/常见括号的也算（`$x$`、`$召回率$`）。
+    static func looksLikeMath(_ body: String) -> Bool {
+        guard !body.isEmpty, body.count <= 200 else { return false }
+        if body.first?.isWhitespace == true || body.last?.isWhitespace == true { return false }
+        if body.contains("\\") || body.contains("^") || body.contains("_")
+            || body.contains("=") || body.contains("{") || body.contains("}") {
+            return true
+        }
+        guard body.count <= 12 else { return false }
+        return body.allSatisfy { character in
+            character.isLetter || character.isNumber || "()[]+-<>/.,'".contains(character)
+        }
+    }
+
     /// 把一段文本按 ⟦术语⟧ 切成「普通文本 / 术语」两段，用于粗体、斜体内部的二次解析
     private static func splitTerms(_ text: String) -> [MarkdownInline] {
         guard text.contains("⟦") else { return [.text(text)] }
@@ -298,6 +371,38 @@ public enum MarkdownLite {
                 if !term.isEmpty { result.append(.term(term)) }
                 index = text.index(after: close)
                 continue
+            }
+
+            // 行内公式：\( ... \)
+            if character == "\\" {
+                let rest = text[index...]
+                if rest.hasPrefix("\\(") {
+                    let after = text.index(index, offsetBy: 2)
+                    if let close = text[after...].range(of: "\\)") {
+                        flushBuffer()
+                        let latex = String(text[after..<close.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !latex.isEmpty { result.append(.mathInline(latex)) }
+                        index = close.upperBound
+                        continue
+                    }
+                }
+            }
+
+            // 行内公式：$...$（跳过 $$ 块、转义的 \$、以及像价格的 "$5 and $10"）
+            if character == "$", !text[index...].hasPrefix("$$") {
+                let isEscaped = index > text.startIndex && text[text.index(before: index)] == "\\"
+                if !isEscaped {
+                    let rest = text[index...].dropFirst()
+                    if let close = rest.firstIndex(of: "$") {
+                        let body = String(rest[..<close])
+                        if looksLikeMath(body) {
+                            flushBuffer()
+                            result.append(.mathInline(body.trimmingCharacters(in: .whitespacesAndNewlines)))
+                            index = text.index(after: close)
+                            continue
+                        }
+                    }
+                }
             }
 
             if character == "`", let close = text[index...].dropFirst().firstIndex(of: "`") {

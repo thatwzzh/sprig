@@ -222,6 +222,13 @@ final class AnswerTextView: NSTextView {
             // 还没渲染好（或拿不到 mermaid 运行时）：显示源码，至少能读
             return Self.codeBlock(source, language: "mermaid")
         }
+        if case .math(let source) = block.kind {
+            // 公式还没画好时先显示源码，画好后再重绘
+            if let image = MathSnapshot.cached(source, display: true) {
+                return Self.imageAttachment(image, maxWidth: available)
+            }
+            return Self.codeBlock(source, language: "math")
+        }
         if case .code(let language) = block.kind {
             return Self.codeBlock(block.plainText, language: language)
         }
@@ -247,8 +254,8 @@ final class AnswerTextView: NSTextView {
         case .quote:
             attributes[.foregroundColor] = MarkdownTheme.current.palette.secondary
             attributes[.paragraphStyle] = Self.indentedParagraph(indent: 10)
-        case .table, .chart, .html, .mermaid:
-            break   // 表格/图表/HTML/Mermaid 在方法开头单独处理
+        case .table, .chart, .html, .mermaid, .math:
+            break   // 表格/图表/HTML/Mermaid/公式 在方法开头单独处理
         case .code:
             break   // 在上面的 codeBlock(_:) 里单独处理
         }
@@ -290,6 +297,12 @@ final class AnswerTextView: NSTextView {
                 term[.foregroundColor] = MarkdownTheme.current.palette.accent
                 if let url = Self.conceptURL(for: value) { term[.link] = url }
                 result.append(NSAttributedString(string: value, attributes: term))
+            case .mathInline(let value):
+                if let image = MathSnapshot.cached(value, display: false) {
+                    result.append(Self.inlineMathAttachment(image, maxWidth: available))
+                } else {
+                    result.append(NSAttributedString(string: "$" + value + "$", attributes: attributes))
+                }
             }
         }
         return result
@@ -337,11 +350,27 @@ final class AnswerTextView: NSTextView {
         return style
     }
 
-    private static func imageAttachment(_ image: NSImage) -> NSAttributedString {
+    private static func imageAttachment(_ image: NSImage, maxWidth: CGFloat? = nil) -> NSAttributedString {
         let attachment = NSTextAttachment()
         attachment.image = image
-        attachment.bounds = NSRect(x: 0, y: 0, width: image.size.width, height: image.size.height)
+        var size = image.size
+        if let maxWidth, maxWidth > 1, size.width > maxWidth {
+            let scale = maxWidth / size.width
+            size = NSSize(width: size.width * scale, height: size.height * scale)
+        }
+        attachment.bounds = NSRect(x: 0, y: 0, width: size.width, height: size.height)
         return attachmentString(attachment)
+    }
+
+    /// 行内公式：小图直接嵌在文字里，底部抬 3pt 让公式和文字中线接近
+    private static func inlineMathAttachment(_ image: NSImage, maxWidth: CGFloat) -> NSAttributedString {
+        let scale = min(1, maxWidth / max(image.size.width, 1))
+        let attachment = NSTextAttachment()
+        attachment.image = image
+        attachment.bounds = NSRect(x: 0, y: -3,
+                                   width: image.size.width * scale,
+                                   height: image.size.height * scale)
+        return NSAttributedString(attachment: attachment)
     }
 
     /// 附件 + 收尾换行，整段共用同一个段落样式

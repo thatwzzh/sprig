@@ -178,6 +178,7 @@ public actor AcpClient {
                     path: String,
                     model: String? = nil,
                     thoughtLevel: String? = nil,
+                    suppressToolActivity: Bool = false,
                     permission: @escaping @Sendable (AcpPermissionAsk) async -> AcpPermissionOutcome,
                     onAuthURL: (@Sendable (URL) -> Void)? = nil) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
@@ -189,6 +190,7 @@ public actor AcpClient {
                                    path: path,
                                    model: model,
                                    thoughtLevel: thoughtLevel,
+                                   suppressToolActivity: suppressToolActivity,
                                    permission: permission,
                                    onAuthURL: onAuthURL,
                                    yield: { gate.yield($0, continuation) },
@@ -206,6 +208,7 @@ public actor AcpClient {
                          path: String,
                          model: String?,
                          thoughtLevel: String?,
+                         suppressToolActivity: Bool,
                          permission: @escaping @Sendable (AcpPermissionAsk) async -> AcpPermissionOutcome,
                          onAuthURL: (@Sendable (URL) -> Void)?,
                          yield: @escaping @Sendable (String) -> Void,
@@ -227,11 +230,13 @@ public actor AcpClient {
                 case .message(let chunk):
                     state.sawMessage = true
                     state.sawVisible = true
+                    DebugTrace.log("acp sink message len=\(chunk.count)")
                     yield(chunk)
                 case .thought(let chunk):
                     state.thoughts += chunk
                 case .tool(let id, let title):
                     guard state.tools.insert(id).inserted else { return }
+                    if suppressToolActivity { return }
                     state.sawVisible = true
                     yield("\n· 工具：\(title)\n")
                 case .ignore:
@@ -251,7 +256,9 @@ public actor AcpClient {
         do {
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { throw AcpError.agent("没有要转发的问题。") }
+            DebugTrace.log("acp runTurn ensureReady begin")
             _ = try await ensureReady(commandLine: commandLine, cwd: cwd, path: path)
+            DebugTrace.log("acp runTurn ensureReady done")
             try Task.checkCancellation()
 
             // 隔离的 HOME 里还没有凭据，而且这个 agent 支持浏览器登录：先把登录做完，
@@ -263,7 +270,9 @@ public actor AcpClient {
                 }
             }
 
+            DebugTrace.log("acp runTurn openSession begin")
             let start = try await openSession(cwd: child?.cwd ?? cwd, yield: yield)
+            DebugTrace.log("acp runTurn openSession done sid=\(start.sessionId)")
             let sid = start.sessionId
             sessionId = sid
             permissions[sid] = permission
@@ -313,7 +322,9 @@ public actor AcpClient {
 
             var settled: JSONValue
             do {
+                DebugTrace.log("acp sendPrompt begin")
                 settled = try await sendPrompt(sid: sid, text: trimmed)
+                DebugTrace.log("acp sendPrompt done")
             } catch AcpError.authRequired {
                 // 会话中途掉登录态（token 过期）时也补一次，而不是把错误甩给用户。
                 guard await login(yield: yield) else {
@@ -350,6 +361,7 @@ public actor AcpClient {
                     yield("\n\n⚠️ \(AcpCodec.refusalDetail(settled, stderrTail: tail).text)\n")
                 }
             }
+            DebugTrace.log("acp runTurn finish ok")
             finish(nil)
             await closeQuietly(sid)
         } catch is CancellationError {

@@ -101,6 +101,61 @@
 - 面板高度流式期间只增不减，不会因为换行忽高忽低
 - 翻看历史时不会被拽回底部——只有贴底才跟随新内容
 
+## 跨应用选词
+
+除了在答案里选词，知枝也能把**其他 App 里选中的文字**变成一张带来源的解释卡：
+
+| 入口 | 用法 | 需要权限 |
+|---|---|---|
+| 热键 | 选中文字 → `⌥⇧Space`（可在设置里改） | 辅助功能（只读取当前选区） |
+| 菜单栏 | 「解释当前选区」/「解释剪贴板内容」 | 选区需要辅助功能；剪贴板不需要 |
+| 服务菜单 | 任意 App 选中文字 → 右键 → 服务 →「用知枝解释」 | 无 |
+| URL scheme | `open "sprig://explain?text=…&url=…&title=…"` | 无 |
+
+解释时会尽量带上来源上下文：**网页**抓公网正文并定位选区所在段落；**本地 Markdown / Obsidian / PDF / Office 文档** 按窗口标题或文件路径反查，带标题层级/页码和所在段落；**DSH 对话**通过专用插件取真实消息上下文；**其他 App** 尽力取 AX 周边文字。来源显示在问题条上方，点一下可回原文。
+
+长文档不是只取选区邻居：Markdown 按标题、PPTX 按幻灯片、网页按段落切 section，先取选区所在段落，再用选区关键词（中文二元组 + 英文词）从其他 section 补 1–2 段最相关的原文；PDF 以选区为中心跨页开窗，选区在页首时会自然带上一页尾部。**默认全程本地计算，不做 LLM 摘要**，上下文上限约 1200 字；来源行右侧的 ⓘ 可以预览实际送进模型的上下文和 token 估算。
+
+设置里可打开「深度上下文（长文档/长对话摘要）」：只有上下文明显超过预算（约 1200 token）时，才调用当前模型把周边资料压缩成摘要（选区原文保留），摘要按内容缓存、同一份内容不重复调用；模型接入未配置时自动退回本地截取，不影响解释。
+
+边界与隐私：
+
+- 不做后台监听；只在按热键 / 点菜单 / 走服务时读取一次选区。
+- 辅助功能首次使用需要在系统设置里授权。**ad-hoc 构建每次重装后会重新询问**，这是 macOS 按签名记账的行为，不是知枝能绕过的。
+- 网页抓取只请求公网 `http(s)`，拒绝内网/本机地址；设置里可关。
+- 文档反查需要手动添加文档文件夹或 Obsidian 库，**不自动扫 `~/Documents`**。
+- PDF 只支持有文字层的文档，扫描版 PDF 没有文本可抽，只会有选区；Office 只抽正文文字（docx 段落 / pptx 幻灯片 / xlsx 行），不还原图片、图表和版式。
+- DSH 对话请用专用插件取选区 + 上下文；其他 Electron 对话 AX 读不到时会模拟一次 ⌘C 并还原剪贴板，只保证选区，拿不到会话前后文。
+- ACP Agent 模式是**问答模式**：不会让 agent 调用 Grep/Bash/Read 等工具，工具权限会自动拒绝；需要 agent 真正执行任务请直接在 agent 客户端里做。
+
+### 跨应用选词设置
+
+菜单栏 →「设置…」（知枝设置）→ 顶部 **「常规 / 跨应用选词」** 两个标签页：
+
+- **常规**：模型接入、Agent、知识库、联网搜索、深度上下文等；
+- **跨应用选词**：总开关、解释选区快捷键、辅助功能状态/去授权、选区长度上限（默认 500 字，可配 200–2000）、网页上下文开关、文档反查（可选）。
+
+**文档文件夹 / Obsidian 库不是必须配置的**：不配置也能正常解释选区。它们只用于「目标 App 不提供文件路径、需要按窗口标题反查本地文档」的场景（例如某些编辑器）。网页抓取、DSH 插件、URL scheme 显式 `path`、AXDocument 文件路径都不依赖这两个配置。
+
+不再有单独的「跨应用划词设置…」菜单入口。深度上下文开关在「常规」标签页的「联网搜索」区域。
+
+### URL scheme / 快捷指令
+
+`sprig://explain` 适合 Raycast / Alfred / 快捷指令 / 书签小工具接力：
+
+| 参数 | 说明 |
+|---|---|
+| `text` | 必填，选中文字（URL 入口上限 500 字） |
+| `title` / `url` / `path` / `app` | 来源线索 |
+| `kind` | `web/agent/markdown/note/app/clipboard/pdf/document`，缺省按 url/path 推断 |
+| `context` / `question` | 可选：入口方已取到的上下文 / 顺带的问题 |
+
+```bash
+open "sprig://explain?text=%E5%B9%BB%E8%A7%89&title=RAG&url=https%3A%2F%2Fexample.com%2Frag&kind=web"
+```
+
+URL scheme 只适合短内容（`text` 上限 500 字、`context` 上限 1000 字）；DSH 插件走的是本地 bridge，不经过 URL scheme。
+
 ## 知识树
 
 每张卡片都记得自己在哪个上下文里诞生，追问时只带相关的祖先节点。
@@ -122,6 +177,7 @@
 - 标题、列表、引用、表格都按排版画，表格会自动折行
 - 代码块按语言着色（Swift / Python / JS / Go / SQL / nginx 等），行内代码带底色
 - `mermaid` 流程图、时序图直接画成图；画不出来就显示源码
+- `$$...$$` / `\[...\]` 数学公式用本地 KaTeX 画成图（行内 `$...$` / `\(...\)` 也支持），不联网；渲染失败退回源码
 - `sprig-chart` 用 JSON 画柱状图 / 折线图
 
 ## 阅读主题
@@ -132,9 +188,25 @@
 
 设置页 → 阅读主题。
 
+## DSH 对话内选词插件
+
+仓库里的 `dsh-plugins/sprig/` 是 DSH（DeepSeek Harness）Client 插件：
+
+- 选中 DSH 对话文字后，DSH 原有的「引用」操作条会变成 **复制 / 引用 / 用知枝解释**，不再额外弹一个和原生 Copy 重叠的右键表面；
+- 只读取选中消息前后各最多一条**真实用户/助手消息**，过滤 `<system-reminder>`、`available_skills`、context 节点，总长 ≤1800 字；
+- 通过本机 `127.0.0.1:53917` 的 bridge 发给**正在运行的知枝**，由知枝建卡并解释；
+- 需要知枝已启动，且设置里启用了「启用跨应用划词」；
+- 只对 DSH Web UI 生效；终端/CLI 不生效。
+
+安装：DSH 设置 → **Plugins → Add plugin**，选择 `dsh-plugins/sprig` 目录；或让 agent 用 `install_bundle` 安装。安装/更新后刷新 DSH 页面或新开会话。
+
+> 插件复用了 DSH 原生 `quote` 表面（key 相同、priority 更低覆盖）；DSH 升级后如果内部表面实现变化，需要跟着适配。bridge 只监听回环地址、无 token，仅能创建解释卡，不读取本机数据；请求日志写到 `/tmp/sprig-bridge.log`。
+
 ## 接入本机 agent
 
-**如果你已经装了 Claude Code、Cursor、CodeBuddy、Gemini CLI 这类命令行 agent，这是最省事的路子**：知枝把问题交给它们，它们自己读文件、跑工具，知枝只负责提问和展示。
+**如果你已经装了 Claude Code、Cursor、CodeBuddy、Gemini CLI 这类命令行 agent，这是最省事的路子**：知枝把问题和上下文交给它们，由它们回答。
+
+> ⚠️ 知枝里的 Agent 是**问答模式**，不是编码工作台：会在 prompt 末尾要求 agent 不要调用任何工具、不要读写文件/工作区；即使 agent 仍请求工具权限，知枝也会自动拒绝并隐藏工具过程。需要执行命令或改文件，请直接在对应 agent 客户端里操作。
 
 **设置页 → Agent** 会自动列出本机已装的：
 
@@ -150,11 +222,11 @@
 
 **怎么切**：对话窗口底部的模型胶囊 →「Agent」组。选中期间联网开关会置灰——联不联网由 agent 自己决定。
 
-**等待期**会显示模型的思考片段和工具调用（如 `Bash: ls`），首字到达后自动让位给正文。
+**等待期**会显示“正在思考…”和模型的思考片段；不会显示工具过程，也不会弹工具权限。
 
 **没登录时**：面板会显示登录链接，点开在浏览器里完成，agent 随后自动重试。
 
-**权限**：agent 要跑命令时会请求授权（标题写成 `Bash: ls` 这种）。选「Always Allow」会生效。
+**权限**：知枝不执行 agent 的工具，工具权限会被自动拒绝；这样连续追问不会卡在一串“需要许可”上。
 
 ## 接入云端模型
 
@@ -283,7 +355,18 @@ defaults import com.catking.sprig.app ~/sprig-backup.plist
 
 ### 菜单栏图标不见了
 
-系统设置 → **菜单栏** → 拉到底「允许在菜单栏中显示」，确认知枝是开着的。
+macOS 26（Tahoe）的 Control Center 会按 App 记录菜单栏可见性；重新打包后可能出现「`isVisible=true` 但窗口被放到屏幕外 y=-22」的情况（这是系统行为，没有公开 API 可以强制恢复）。新版启动时会：
+
+1. 检查状态项窗口是否被放到了屏幕外，自动重试重建/切换可见性（静默处理，不弹窗）；
+2. 如果仍被隐藏，请手动修复：**系统设置 → 菜单栏 → 找到「知枝」→ 选择「在菜单栏中显示」**（或把它从隐藏区拖回菜单栏）。之后系统会记住；也可以直接用 `⌥Space` / `⌥⇧Space` 使用面板。
+
+### 跨应用划词没反应 / 读不到选区
+
+1. 检查 **系统设置 → 隐私与安全性 → 辅助功能** 里知枝是否勾选；ad-hoc 构建每次重建后都要重新勾一次（授权弹窗出现时知枝面板会自动降到普通层级，不会挡住弹窗）。
+2. 面板已经在前台时按热键不会读知枝自己；先切到目标 App 并选中文字。
+3. Chrome / Electron 第一次取词可能为空（无障碍树要预热），再按一次。
+4. 当前 App 不暴露 AX 选区时，先复制文字，用菜单栏「解释剪贴板内容」兜底。
+5. 想看诊断信息：`Sprig --capture-selection` 会打印是否授权、读到的选区/来源。
 
 ### 一直 429
 
@@ -335,8 +418,23 @@ Sprig --settings --dump           # 打印设置表单状态
 Sprig --headless "问题"            # 只跑 provider + 解析器
 Sprig --test-agents               # 逐条测试已配置的 agent
 Sprig --acp-host-info             # 查看内置 acp-host 路径与版本
+Sprig --acp-host-probe "问题"     # 不经过 UI，验证 acp-host 链路
+Sprig --direct-acp-probe "问题"   # 不经过 UI，验证直连 ACP 链路
 Sprig --readme-shots /tmp/shots   # 用临时知识库生成 README 配图
 SPRIG_ACP_TRACE=/tmp/acp.log Sprig --ask "你好"   # 记录 ACP 原始帧
+
+# 跨应用选词（P0/P1）
+Sprig --capture-selection [pid]   # AX 取词诊断（需辅助功能权限）
+Sprig --request-accessibility     # 触发系统授权提示并打印状态
+Sprig --prompt-explain /tmp/e.json          # 打印外部选词的 system/user 消息
+Sprig --resolve-context /tmp/e.json [--no-fetch]  # 来源上下文解析 + 最终 Prompt
+Sprig --explain-url "sprig://explain?..." --dry-run  # 只解析入口，不流式
+Sprig --math-demo '\frac{a}{b}' /tmp/math.png       # 校验 KaTeX 公式渲染
+Sprig --math-panel-demo /tmp/math-panel.png         # 造一张公式卡拍面板
+
+# DSH 插件 / 本机 bridge
+tail -f /tmp/sprig-bridge.log      # DSH 插件 POST 是否到达知枝
+tail -f /tmp/sprig-trace.log       # ACP 流式各阶段（排查一直生成中）
 ```
 
 完整列表见 ARCHITECTURE 的「测试与调试」章节。

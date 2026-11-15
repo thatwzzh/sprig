@@ -127,6 +127,11 @@ public enum AcpCodec {
     public static let termHint = "\n\n（用中文直接回答。专有名词第一次出现时写成 ⟦术语⟧，不要解释这个标记；"
         + "需要分点、对比或给步骤时用 Markdown 列表/表格/代码块；画图用 mermaid，不要输出 HTML。）"
 
+    /// 知枝只做解释/问答：告诉 agent 不要进入编码工作流。
+    public static let qaHint = "\n\n（知枝问答模式：只根据用户消息和给定上下文直接回答；"
+        + "禁止调用 Grep、Bash、Read、Write 等任何工具，禁止检查或修改工作区。"
+        + "信息不足就直接说明，不要到工作区里找。）"
+
     /// 启动命令的展示名。`npx -y some-pkg` 显示包名，而不是 npx。
     public static func programName(commandLine: String) -> String {
         let tokens = tokenize(commandLine)
