@@ -1,8 +1,26 @@
 {
-  "name": "@local/sprig",
+  "name": "dsh-plugin-sprig",
   "version": "1.0.0",
-  "private": true,
+  "description": "DSH client plugin: send selected conversation text to Sprig and get a source-aware explanation card.",
   "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thatwzzh/sprig.git",
+    "directory": "dsh-plugins/sprig"
+  },
+  "homepage": "https://github.com/thatwzzh/sprig/tree/main/dsh-plugins/sprig",
+  "bugs": {
+    "url": "https://github.com/thatwzzh/sprig/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "sprig",
+    "selection",
+    "explain",
+    "macos"
+  ],
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
@@ -15,7 +33,8 @@
     "cordis.patch.yml",
     "locale/*.json",
     "docs",
-    "icon.svg"
+    "icon.svg",
+    "README.md"
   ],
   "dsh": {
     "bundle": {
