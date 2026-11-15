@@ -1518,3 +1518,44 @@ footer {
   color: var(--ink-1);
   font-weight: 600;
 }
+
+/* 04 选词：DSH 插件的安装步骤 */
+.dsh-note {
+  margin-top: 36px;
+  padding: 24px 26px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card);
+}
+
+.dsh-note h3 {
+  margin: 0 0 14px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink-1);
+}
+
+.dsh-note ol {
+  margin: 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 8px;
+}
+
+.dsh-note li {
+  font-size: 13.5px;
+  line-height: 1.7;
+  color: var(--ink-3);
+}
+
+.dsh-note p {
+  margin: 16px 0 0;
+  font-size: 13px;
+  line-height: 1.75;
+  color: var(--ink-3);
+}
+
+.dsh-caveat {
+  color: var(--ink-4) !important;
+  font-size: 12.5px !important;
+}

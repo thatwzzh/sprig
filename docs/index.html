@@ -188,6 +188,18 @@
           <li><strong>URL scheme</strong>：<code>sprig://explain?text=…</code>，可接 Raycast、快捷指令、书签小工具</li>
           <li><strong>DSH 插件</strong>：在 DSH 对话里选中，直接送进来，自动带上前后消息</li>
         </ul>
+
+        <div class="dsh-note">
+          <h3>DSH 插件怎么装</h3>
+          <ol>
+            <li>把仓库里的 <code>dsh-plugins/sprig/</code> 目录拿到本地（<code>git clone</code> 或直接下这个目录）</li>
+            <li>打开 DSH 设置 → <strong>Plugins → Add plugin</strong>，选中那个目录</li>
+            <li>确认知枝正在运行，并且设置里已开启「启用跨应用划词」</li>
+            <li>刷新 DSH 页面，或新开一个会话</li>
+          </ol>
+          <p>装好后在 DSH 对话里选中文字，原生「引用」条会变成 <strong>复制 / 引用 / 用知枝解释</strong>。只读选区前后各最多一条真实消息（过滤掉 system-reminder 和 skill 清单，上限 1800 字），通过本机 <code>127.0.0.1:53917</code> 发给知枝。</p>
+          <p class="dsh-caveat">仅对 DSH Web UI 生效，终端和 CLI 不行。插件复用了 DSH 内部的 quote 表面，DSH 大版本升级后可能需要跟着适配。</p>
+        </div>
       </div>
     </div>
   </section>
